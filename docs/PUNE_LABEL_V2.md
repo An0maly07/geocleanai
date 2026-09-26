@@ -18,11 +18,11 @@ One page for the whole team: see `docs/TEAM_LABELLING.md`.
 .\.venv\Scripts\python.exe -m training.review_server --data data/pune-label-v2
 ```
 
-## Export and split
+## Export
 
 ```powershell
 .\.venv\Scripts\python.exe -m training.review_server --data data/pune-label-v2 --export data/pune-label-v2-export
-.\.venv\Scripts\python.exe training\split_pune_labels.py
+.\.venv\Scripts\python.exe training\split_pune_labels.py --all-train --train-output data/pune-train-all
 ```
 
-The split is fixed in advance and uses label counts only (never model results). Whole location groups go to one side. Validation takes about a third of the panoramas and 20–45% of the litter regions, and the largest group stays in training. Output: `data/pune-train-v1/` and `data/pune-val-v1/`, each with a hash lock.
+No train/val split (decided 26 September 2026): every labelled view trains, and model selection uses the street-like TACO proxy. The script refuses views from the locked test's capture sequences and any image byte-identical to a locked test image, then writes `data/pune-train-all/` with a hash lock. The original group-based split (without `--all-train`) is still available if a Pune validation set is wanted later.

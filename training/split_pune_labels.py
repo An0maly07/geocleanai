@@ -1,5 +1,8 @@
 """Split newly labelled Pune views into training and validation sets by location group.
 
+--all-train (decided 26 September 2026: no train/val split of the labelled set): every
+exported view goes to one training set instead, with the same guards against the locked test.
+
 Rule (fixed before labelling; uses label counts only, never model results):
 - Whole location groups only: sequences that pass within 100 m of each other never straddle
   the split, so the same street cannot be in both sets.
@@ -77,18 +80,44 @@ def write_split(export: Path, views: list[dict], output: Path, role: str, parent
     (output/'evaluation-lock.json').write_text(json.dumps(lock, indent=2))
 
 
-def split(export: Path, candidates: Path, train_out: Path, val_out: Path, test_manifest: Path) -> dict:
-    for folder in (train_out, val_out):
-        if folder.exists():
-            raise ValueError(f'{folder} exists; splits are never overwritten.')
+def load_views(export: Path, candidates: Path, test_manifest: Path) -> list[dict]:
+    """Exported views with their location group; refuses anything from the locked test set."""
     views = json.loads((export/'manifest.json').read_text())['views']
     groups = {c['id']: c['location_group'] for c in json.loads(candidates.read_text())}
     test_sequences = {v['sequence'] for v in json.loads(test_manifest.read_text())['views']}
     leaked = [v['file_name'] for v in views if v['sequence'] in test_sequences]
     if leaked:
         raise ValueError(f'Views from locked test sequences: {leaked[:5]}')
+    test_lock = test_manifest.with_name('evaluation-lock.json')
+    if test_lock.is_file():
+        test_hashes = {row['image_sha256'] for row in json.loads(test_lock.read_text())['files']}
+        leaked = [v['file_name'] for v in views if sha256(export/'images'/v['file_name']) in test_hashes]
+        if leaked:
+            raise ValueError(f'Views identical to locked test images: {leaked[:5]}')
     for view in views:
         view['location_group'] = groups[view['image_id']]
+    return views
+
+
+def all_training(export: Path, candidates: Path, train_out: Path, test_manifest: Path) -> dict:
+    """Every labelled view for training; model selection then relies on the TACO proxy."""
+    if train_out.exists():
+        raise ValueError(f'{train_out} exists; splits are never overwritten.')
+    views = load_views(export, candidates, test_manifest)
+    stats = group_statistics(views, {v['image_id']: v['location_group'] for v in views}, export/'labels')
+    parent = {'source_export': str(export), 'candidates_sha256': sha256(candidates),
+              'split_rule': {'rule': 'No split (decided 26 September 2026): all labelled views train; the locked test set is excluded.'}}
+    write_split(export, views, train_out, 'pune_training', parent)
+    return {'training': {k: sum(s[k] for s in stats.values()) for k in ('panoramas', 'views', 'litter_views', 'regions')},
+            'location_groups': len(stats)}
+
+
+def split(export: Path, candidates: Path, train_out: Path, val_out: Path, test_manifest: Path) -> dict:
+    for folder in (train_out, val_out):
+        if folder.exists():
+            raise ValueError(f'{folder} exists; splits are never overwritten.')
+    views = load_views(export, candidates, test_manifest)
+    groups = {v['image_id']: v['location_group'] for v in views}
     stats = group_statistics(views, groups, export/'labels')
     validation, summary = choose_validation(stats)
     parent = {'source_export': str(export), 'candidates_sha256': sha256(candidates), 'split_rule': summary}
@@ -105,5 +134,9 @@ if __name__ == '__main__':
     parser.add_argument('--train-output', type=Path, default=Path('data/pune-train-v1'))
     parser.add_argument('--val-output', type=Path, default=Path('data/pune-val-v1'))
     parser.add_argument('--test-manifest', type=Path, default=Path('data/pune-test-v1/manifest.json'))
+    parser.add_argument('--all-train', action='store_true', help='No validation split: every labelled view goes to --train-output')
     args = parser.parse_args()
-    print(json.dumps(split(args.export, args.candidates, args.train_output, args.val_output, args.test_manifest), indent=2))
+    if args.all_train:
+        print(json.dumps(all_training(args.export, args.candidates, args.train_output, args.test_manifest), indent=2))
+    else:
+        print(json.dumps(split(args.export, args.candidates, args.train_output, args.val_output, args.test_manifest), indent=2))

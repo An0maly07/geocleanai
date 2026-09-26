@@ -267,8 +267,8 @@ def experiment_cells(setup) -> list[tuple[str, str]]:
             # GeoCleanAI — B. Experiments, selection and one locked Pune evaluation
 
             Rules:
-            - At most three experiments (configs in `training/experiments/`). Run **E1** first; run E2/E3 only if their conditions are met.
-            - Decisions use validation data only: the **Pune validation set** (`pune-val-v1`, whole location groups never used for training) and the street-like TACO proxy (`litter-v2` val). If Pune validation has at least 20 litter regions, it sets the threshold and the score; otherwise the threshold comes from the proxy and Pune validation recall at that threshold is the score. The Pune test is not opened until a candidate and its threshold are locked in `selection-record.json`.
+            - At most three experiments (configs in `training/experiments/`). Run **E1**, then **E3** (tiled 1024), then **E2** (P2 head) only if its condition is met.
+            - Every labelled Pune view trains (no Pune validation split, decided 26 September 2026), so decisions use the street-like TACO proxy (`litter-v2` / `litter-v2-r1024` val). A Pune validation folder is still used if one is ever added to the bundle. The Pune test is not opened until a candidate and its threshold are locked in `selection-record.json`.
             - Keep 0.35 results for comparison with the baseline. A different threshold must come from validation and be locked before the Pune run.
             - E3 (1024px views cut into 640px tiles) uses the same tiling code as the app (`backend/tiling.py`) and is scored on 1024px copies of the Pune views with unchanged labels.
         '''),
@@ -278,7 +278,7 @@ def experiment_cells(setup) -> list[tuple[str, str]]:
             from datetime import datetime, timezone
             from training.evaluate import evaluate, sweep, choose_threshold
             BASE, PUNE = V2/'baseline-v1/files', V1/'pune-test'
-            EXPERIMENT = 'e1-domain-matched'  # then 'e2-capacity' / 'e3-tiled-1024' only if justified
+            EXPERIMENT = 'e1-domain-matched'  # then 'e3-tiled-1024', then 'e2-p2-head' only if justified
             config = json.loads((V2/f'code/training/experiments/{EXPERIMENT}.json').read_text())
             DATA = V2/'datasets'/config['data']
             assert DATA.is_file(), f'{config["data"]} is not in this bundle.'
@@ -344,8 +344,8 @@ def experiment_cells(setup) -> list[tuple[str, str]]:
         ('markdown', '''
             ## Stop conditions (validation only)
             - **E1:** if the best checkpoint's proxy recall (at the chosen threshold) beats the baseline by < 5 points → stop: the data, not the recipe, is the limit.
-            - **E2:** run only if E1 improved but underfits (training loss still falling, validation still rising at the end). Drop E2 if its gain over E1 is < 3 points.
-            - **E3:** run only if small-object recall stays low while ≥32px recall is good.
+            - **E3:** run if E1's small-object recall (<16 px) stays low while ≥32px recall is good. Drop it if its small-object gain is < 5 points or the latency gate fails.
+            - **E2 (P2 head):** run only after E3, if E3's <16 px recall is still well below its ≥32 px recall. Drop it if its gain over E3 is < 3 points.
         '''),
         ('code', '''
             baseline = next(r for r in table if r['checkpoint'].endswith('baseline-v1/files/best.pt'))

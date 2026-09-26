@@ -1,0 +1,38 @@
+{
+  "imgsz": 640,
+  "batch": 16,
+  "batch_fallbacks": [
+    8,
+    4
+  ],
+  "epochs": 50,
+  "patience": 10,
+  "seed": 42,
+  "deterministic": true,
+  "workers": 2,
+  "save_period": 5,
+  "ultralytics_version": "8.4.155",
+  "augment": {
+    "degrees": 0.0,
+    "flipud": 0.0,
+    "perspective": 0.0,
+    "scale": [
+      0.75,
+      1.5
+    ],
+    "mixup": 0.0,
+    "cutmix": 0.0
+  },
+  "confidence_threshold": 0.35,
+  "name": "e2-p2-head",
+  "question": "Does an extra stride-4 (P2) detection head find litter under 16 px that the stride-8 head misses? YOLO26 is anchor-free, so this replaces anchor tuning. Same data and tiling as E3; yolo26n-p2 initialised from yolo26n.pt. Run only after E3, and only if E3's proxy recall under 16 px is still well below its recall at 32 px and over. About 1.6x the compute of yolo26n per tile (9.5 vs 6.1 GFLOPs): re-measure the 24-tile panorama latency.",
+  "model": "yolo26n-p2.yaml",
+  "pretrained": "yolo26n.pt",
+  "data": "litter-v2-r1024/dataset.yaml",
+  "version": "pune-litter-e2",
+  "tiling": {
+    "face_size": 1024,
+    "tile": 640,
+    "stride": 384
+  }
+}

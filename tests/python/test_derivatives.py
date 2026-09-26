@@ -75,9 +75,9 @@ def test_build_downscales_keeps_splits_and_uses_only_reviewed_negatives(tmp_path
     summary = build(source, tmp_path/'v2', 'r640', 42, 2, review, negative_share=1.0)
     records = json.loads((tmp_path/'v2/splits.json').read_text())['images']
     derivatives = json.loads((tmp_path/'v2/derivatives.json').read_text())
-    assert summary['counts']['train'] == {'original': 2, 'derived': 4, 'negative': 1, 'pune': 0}
-    assert summary['counts']['val'] == {'original': 0, 'derived': 1, 'negative': 0, 'pune': 0}
-    assert summary['counts']['test'] == {'original': 1, 'derived': 0, 'negative': 0, 'pune': 0}
+    assert summary['counts']['train'] == {'original': 2, 'derived': 4, 'negative': 1, 'pune': 0, 'pune_empty': 0}
+    assert summary['counts']['val'] == {'original': 0, 'derived': 1, 'negative': 0, 'pune': 0, 'pune_empty': 0}
+    assert summary['counts']['test'] == {'original': 1, 'derived': 0, 'negative': 0, 'pune': 0, 'pune_empty': 0}
     assert not any(1 in r['parents'] and r['split'] == 'train' for r in records)  # Unusable left training.
     assert all(p['scale'] <= 1 for d in derivatives for p in d.get('parts', []))  # Never enlarged.
     assert all(set(r['parents']) <= {3} for r in records if r['split'] == 'val')  # Val tiles use val photos only.
@@ -144,3 +144,26 @@ def test_large_pune_views_are_cut_into_labelled_640_tiles(tmp_path):
         _, x, y, w, h = map(float, (tmp_path/f'v2/labels/train/pune0_111_front_t{index}.txt').read_text().split())
         assert (w*640, h*640) == pytest.approx((20, 20), abs=.01)
         assert min(tile.getpixel((round(x*640), round(y*640)))) > 200  # label sits on the white item
+
+
+def test_litter_free_pune_tiles_are_used_once_and_capped(tmp_path):
+    from training.split_pune_labels import sha256
+    source = make_source(tmp_path, ['train', 'val', 'test'])
+    pune = tmp_path/'pune-train-r1024'; (pune/'images').mkdir(parents=True); (pune/'labels').mkdir()
+    files = []
+    for index in range(6):
+        name = f'{100 + index}_front.jpg'
+        Image.new('RGB', (1024, 1024), (30, 30, 30)).save(pune/'images'/name)
+        # One view has litter in its top-left tile only; the other five are clean.
+        (pune/'labels'/f'{100 + index}_front.txt').write_text(f'0 {60/1024} {60/1024} {20/1024} {20/1024}' if index == 0 else '')
+        files.append({'image': name, 'location_group': 'g1', 'image_sha256': sha256(pune/'images'/name)})
+    (pune/'evaluation-lock.json').write_text(json.dumps({'role': 'pune_training', 'files': files}))
+    summary = build(source, tmp_path/'v2', 'r1024', 42, 1, None, pune_train=pune, pune_repeat=2, pune_empty_share=.25)
+    train = summary['counts']['train']
+    assert train['pune'] == 2 and summary['pune_empty_available'] == 23  # 24 tiles, one with litter
+    total = sum(train.values())
+    assert 0 < train['pune_empty'] <= .25 * total
+    names = [p.name for p in (tmp_path/'v2/images/train').glob('pune*_t*.jpg')]
+    assert all(n.startswith('pune0_') for n in names if not n.startswith('pune1_100_front_t0'))
+    for label in (tmp_path/'v2/labels/train').glob('pune0_10[1-5]_*.txt'):
+        assert label.read_text() == ''

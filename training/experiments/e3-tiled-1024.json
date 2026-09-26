@@ -15,11 +15,17 @@
   "augment": {
     "degrees": 0.0,
     "flipud": 0.0,
-    "perspective": 0.0
+    "perspective": 0.0,
+    "scale": [
+      0.75,
+      1.5
+    ],
+    "mixup": 0.0,
+    "cutmix": 0.0
   },
   "confidence_threshold": 0.35,
   "name": "e3-tiled-1024",
-  "question": "Does real detail from 1024px views (2x2 overlapping 640px tiles) recover small litter? Justified by the baseline diagnosis: TACO test recall is 5% under 16 px vs 68% at 32 px and over, and 61% of Pune regions are under 16 px at 640. Data: litter-v2-r1024 (+ Pune training views at 1024 cut into tiles). Model follows the better of E1/E2; edit model before running.",
+  "question": "Does real detail from 1024px views (2x2 overlapping 640px tiles) recover small litter? Justified by the baseline diagnosis: TACO test recall is 9% at 8-16 px vs 68% at 32 px and over, and 61% of Pune regions are under 16 px at 640 (41% at 1024). Data: litter-v2-r1024 (TACO at 1024 scale + all labelled Pune views at 1024 cut into tiles). Model follows E1 unless E2 has already beaten it; edit model/pretrained before running.",
   "model": "yolo26n.pt",
   "data": "litter-v2-r1024/dataset.yaml",
   "version": "pune-litter-e3",

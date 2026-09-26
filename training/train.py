@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 # Settings the first baseline used; a config only needs to state what it changes.
-DEFAULTS = {'model': 'yolo26n.pt', 'imgsz': 640, 'batch': 8, 'epochs': 50, 'patience': 10, 'seed': 42,
+DEFAULTS = {'model': 'yolo26n.pt', 'pretrained': None, 'imgsz': 640, 'batch': 8, 'epochs': 50, 'patience': 10, 'seed': 42,
             'deterministic': True, 'workers': 2, 'save_period': 5, 'batch_fallbacks': [], 'augment': {},
             'ultralytics_version': None, 'confidence_threshold': .35}
 LOGS = ('results.csv', 'args.yaml', 'results.png', 'BoxPR_curve.png', 'BoxF1_curve.png', 'confusion_matrix.png',
@@ -60,11 +60,13 @@ def fit(config: dict, data: Path, output: Path):
         name = config['name'] if batch == config['batch'] else f"{config['name']}-b{batch}"
         model = YOLO(config['model'])
         try:
+            # A .yaml architecture (e.g. the P2 head) starts from the weights named in 'pretrained'.
+            extra = {'pretrained': config['pretrained']} if config['pretrained'] else {}
             model.train(data=str(data), epochs=config['epochs'], imgsz=config['imgsz'], batch=batch,
                         patience=config['patience'], seed=config['seed'], deterministic=config['deterministic'],
                         workers=config['workers'], save_period=config['save_period'],
                         device=0 if torch.cuda.is_available() else 'cpu',
-                        project=str(output/'runs'), name=name, exist_ok=False, **config['augment'])
+                        project=str(output/'runs'), name=name, exist_ok=False, **extra, **config['augment'])
             return model, batch
         except torch.cuda.OutOfMemoryError:
             print(f'Out of GPU memory at batch {batch}; trying the next fallback.')

@@ -53,3 +53,16 @@ def test_split_refuses_test_sequences(tmp_path):
     (tmp_path/'test.json').write_text(json.dumps({'views': [{'sequence': 'seq-g2'}]}))
     with pytest.raises(ValueError, match='locked test sequences'):
         split(export, tmp_path/'candidates.json', tmp_path/'train', tmp_path/'val', tmp_path/'test.json')
+
+
+def test_all_train_keeps_every_view_and_refuses_test_images(tmp_path):
+    from training.split_pune_labels import all_training, sha256
+    export = make_export(tmp_path, [('g1', 3), ('g2', 0), ('g3', 1)])
+    result = all_training(export, tmp_path/'candidates.json', tmp_path/'train', tmp_path/'test.json')
+    lock = json.loads((tmp_path/'train/evaluation-lock.json').read_text())
+    assert lock['role'] == 'pune_training' and len(lock['files']) == 6
+    assert result['training'] == {'panoramas': 3, 'views': 6, 'litter_views': 2, 'regions': 4}
+    # A byte-identical copy of a locked test image is refused even under another sequence.
+    (tmp_path/'evaluation-lock.json').write_text(json.dumps({'files': [{'image_sha256': sha256(export/'images/1000_front.jpg')}]}))
+    with pytest.raises(ValueError, match='identical to locked test'):
+        all_training(export, tmp_path/'candidates.json', tmp_path/'train2', tmp_path/'test.json')

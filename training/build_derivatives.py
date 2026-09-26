@@ -20,6 +20,10 @@ Rules:
   at most ~10% of training images, with a 16px margin around every box.
 - Photos a reviewer marked 'unusable' leave training only; val and test stay complete.
 - Validation becomes the street-like proxy built from val-split photos only.
+- Pune training views (or their 640px tiles) with litter are repeated pune_repeat times.
+  Litter-free Pune tiles are real street negatives (flags, people, road clutter) but would
+  otherwise dominate once all ~960 labelled views train, so they are used once each and capped
+  at pune_empty_share of the final training set, picked by seed.
 """
 import argparse
 import csv
@@ -276,7 +280,8 @@ def read_review(path: Path | None) -> dict[int, dict]:
 
 
 def build(source: Path, output: Path, profile: str, seed: int, per_image: int, review_path: Path | None,
-          negative_share: float = .1, clean_share: float = .5, pune_train: Path | None = None, pune_repeat: int = 3):
+          negative_share: float = .1, clean_share: float = .5, pune_train: Path | None = None, pune_repeat: int = 3,
+          pune_empty_share: float = .15):
     if output.exists() and any(output.iterdir()):
         raise ValueError('Choose an empty output folder to avoid mixing dataset versions.')
     split_data = json.loads((source/'splits.json').read_text())
@@ -303,9 +308,24 @@ def build(source: Path, output: Path, profile: str, seed: int, per_image: int, r
             shutil.copy2(source/'labels'/split/f'{image_id}.txt', output/'labels'/split/f'{image_id}.txt')
             records.append({'name': path.name, 'parents': [image_id], 'groups': [parents[image_id]['group']], 'split': split, 'kind': 'original'})
 
+    def write_pune(name, target, window, parent, kind):
+        """window None copies the whole view and its label file; otherwise (x0, y0) of a 640px tile."""
+        if window is None:
+            shutil.copy2(pune_train/'images'/name, output/'images/train'/target)
+            shutil.copy2(pune_train/'labels'/f'{Path(name).stem}.txt', output/'labels/train'/f'{Path(target).stem}.txt')
+        else:
+            with Image.open(pune_train/'images'/name) as opened:
+                view = opened.convert('RGB')
+            boxes = read_boxes(pune_train/'labels'/f'{Path(name).stem}.txt', *view.size)
+            crop, kept, _, _ = crop_to(view, boxes, *window, min(TILE, view.width), min(TILE, view.height))
+            crop.save(output/'images/train'/target, quality=95)
+            (output/'labels/train'/f'{Path(target).stem}.txt').write_text('\n'.join(yolo_lines(kept)))
+        records.append({'name': target, **parent, 'split': 'train', 'kind': kind})
+
+    pune_empty, pune_ambiguous = [], 0
     if pune_train:
-        # Real Pune street views, already at detector scale. Repeated so ~40 panoramas are not
-        # swamped by ~3,000 TACO images; they come only from the Pune training split.
+        # Real Pune street views, already at detector scale. Pieces with litter are repeated so they
+        # are not swamped by ~3,000 TACO images; they come only from the Pune training set.
         lock = json.loads((pune_train/'evaluation-lock.json').read_text())
         if lock['role'] != 'pune_training':
             raise ValueError(f'{pune_train} is not a Pune training split.')
@@ -314,28 +334,28 @@ def build(source: Path, output: Path, profile: str, seed: int, per_image: int, r
             if hashlib.sha256((pune_train/'images'/name).read_bytes()).hexdigest() != row['image_sha256']:
                 raise ValueError(f'{name} changed since the Pune split was made.')
             with Image.open(pune_train/'images'/name) as opened:
-                view = opened.convert('RGB')
-            if max(view.size) <= TILE:
-                pieces = [(name, None)]
+                size = opened.size
+            boxes = read_boxes(pune_train/'labels'/f'{Path(name).stem}.txt', *size)
+            if max(size) <= TILE:
+                pieces = [(name, None, 'litter' if boxes else 'empty')]
             else:
                 # Views rendered above 640px (E3) are cut into the same overlapping 640px tiles the
                 # app uses, with the usual rule for litter cut by a tile edge.
-                boxes = read_boxes(pune_train/'labels'/f'{Path(name).stem}.txt', *view.size)
                 pieces = []
-                for index, (x0, y0) in enumerate(tile_grid(*view.size)):
-                    crop, kept, _, _ = crop_to(view, boxes, x0, y0, min(TILE, view.width), min(TILE, view.height))
-                    pieces.append((f'{Path(name).stem}_t{index}.jpg', (crop, kept)))
-            for k in range(pune_repeat):
-                for piece, tile in pieces:
-                    target = f'pune{k}_{piece}'
-                    if tile is None:
-                        shutil.copy2(pune_train/'images'/name, output/'images/train'/target)
-                        shutil.copy2(pune_train/'labels'/f'{Path(name).stem}.txt', output/'labels/train'/f'{Path(target).stem}.txt')
-                    else:
-                        tile[0].save(output/'images/train'/target, quality=95)
-                        (output/'labels/train'/f'{Path(target).stem}.txt').write_text('\n'.join(yolo_lines(tile[1])))
-                    records.append({'name': target, 'parents': [f"pune:{Path(name).stem.rsplit('_', 1)[0]}"],
-                                    'groups': [f"pune:{row['location_group']}"], 'split': 'train', 'kind': 'pune'})
+                for index, (x0, y0) in enumerate(tile_grid(*size)):
+                    kept, grey, dropped = window_labels(boxes, x0, y0, min(TILE, size[0]), min(TILE, size[1]))
+                    # A tile with only greyed or too-small litter is neither a clean negative nor a usable positive.
+                    kind = 'litter' if kept else ('empty' if not grey and not dropped else 'ambiguous')
+                    pieces.append((f'{Path(name).stem}_t{index}.jpg', (x0, y0), kind))
+            parent = {'parents': [f"pune:{Path(name).stem.rsplit('_', 1)[0]}"], 'groups': [f"pune:{row['location_group']}"]}
+            for piece, window, kind in pieces:
+                if kind == 'empty':
+                    pune_empty.append((name, piece, window, parent))  # Written after TACO, once the cap is known.
+                elif kind == 'ambiguous':
+                    pune_ambiguous += 1
+                else:
+                    for k in range(pune_repeat):
+                        write_pune(name, f'pune{k}_{piece}', window, parent, 'pune')
 
     with tempfile.TemporaryDirectory() as cache_dir:
         for split, count in (('train', per_image), ('val', 1)):
@@ -362,6 +382,13 @@ def build(source: Path, output: Path, profile: str, seed: int, per_image: int, r
                     add(f'{photo.id}_{profile}_neg.jpg', tile, [], split, 'negative', [photo.id], {**detail, 'degradation': params})
                     made += 1
 
+    if pune_empty:
+        # Cap litter-free Pune pieces at pune_empty_share of the final training set.
+        others = sum(r['split'] == 'train' for r in records)
+        allowed = min(len(pune_empty), int(pune_empty_share / (1 - pune_empty_share) * others))
+        for name, piece, window, parent in random.Random(f'{seed}-{profile}-pune-empty').sample(pune_empty, allowed):
+            write_pune(name, f'pune0_{piece}', window, parent, 'pune_empty')
+
     # Leakage guard: a parent photo or capture group must never appear in two splits.
     for key in ('parents', 'groups'):
         seen = {}
@@ -370,13 +397,15 @@ def build(source: Path, output: Path, profile: str, seed: int, per_image: int, r
                 if seen.setdefault(value, record['split']) != record['split']:
                     raise AssertionError(f'{key[:-1]} {value} appears in two splits')
     (output/'dataset.yaml').write_text('path: .\ntrain: images/train\nval: images/val\ntest: images/test\nnames:\n  0: litter\n', encoding='utf-8')
-    counts = {split: {kind: sum(r['split'] == split and r['kind'] == kind for r in records) for kind in ('original', 'derived', 'negative', 'pune')} for split in ('train', 'val', 'test')}
+    counts = {split: {kind: sum(r['split'] == split and r['kind'] == kind for r in records) for kind in ('original', 'derived', 'negative', 'pune', 'pune_empty')} for split in ('train', 'val', 'test')}
     tiles = [d for d in derivatives if d['kind'] == 'derived']
     summary = {'profile': profile, 'px_per_degree': px_per_degree, 'seed': seed, 'per_image': per_image,
                'source_split_sha256': hashlib.sha256((source/'splits.json').read_bytes()).hexdigest(),
                'review_file': str(review_path) if review_path and review_path.is_file() else None, 'reviewed_images': len(review),
                'unusable_removed_from_train': sum(1 for i, r in review.items() if r['status'] == 'unusable' and parents.get(i, {}).get('split') == 'train'),
                'counts': counts, 'pune_train': str(pune_train) if pune_train else None, 'pune_repeat': pune_repeat if pune_train else 0,
+               'pune_empty_share': pune_empty_share if pune_train else 0, 'pune_empty_available': len(pune_empty),
+               'pune_ambiguous_tiles_skipped': pune_ambiguous,
                'mean_photos_per_tile': round(float(np.mean([len(d['parts']) for d in tiles])), 2) if tiles else None,
                'mean_grey_share': round(float(np.mean([d['grey_share'] for d in tiles])), 3) if tiles else None,
                'mean_labels_per_tile': round(float(np.mean([d['labels'] for d in tiles])), 1) if tiles else None,
@@ -405,8 +434,10 @@ if __name__ == '__main__':
     parser.add_argument('--per-image', type=int, default=2, help='Derived tiles per training photo')
     parser.add_argument('--review', type=Path, default=Path('data/litter-review/review-queue.csv'))
     parser.add_argument('--clean-share', type=float, default=.5, help='Share of collage areas filled with verified clean ground')
-    parser.add_argument('--pune-train', type=Path, help='Pune training split from training/split_pune_labels.py')
+    parser.add_argument('--pune-train', type=Path, help='Pune training set from training/split_pune_labels.py (--all-train)')
     parser.add_argument('--pune-repeat', type=int, default=3)
+    parser.add_argument('--pune-empty-share', type=float, default=.15, help='Cap on litter-free Pune pieces as a share of the training set')
     args = parser.parse_args()
     print(json.dumps(build(args.source, args.output, args.profile, args.seed, args.per_image, args.review,
-                           clean_share=args.clean_share, pune_train=args.pune_train, pune_repeat=args.pune_repeat), indent=2))
+                           clean_share=args.clean_share, pune_train=args.pune_train, pune_repeat=args.pune_repeat,
+                           pune_empty_share=args.pune_empty_share), indent=2))

@@ -15,7 +15,13 @@
   "augment": {
     "degrees": 0.0,
     "flipud": 0.0,
-    "perspective": 0.0
+    "perspective": 0.0,
+    "scale": [
+      0.75,
+      1.5
+    ],
+    "mixup": 0.0,
+    "cutmix": 0.0
   },
   "confidence_threshold": 0.35,
   "name": "e1-domain-matched",
