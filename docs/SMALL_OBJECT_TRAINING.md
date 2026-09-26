@@ -17,7 +17,7 @@ Why this exists: the baseline found 0 of 54 Pune regions. The diagnosis (`docs/B
 
 ## Anchors → a P2 head (E2)
 
-YOLO26 is anchor-free, so there are no anchors to tune. The equivalent lever is where the model predicts: its finest head is stride 8, so an 8 px item is one grid cell. E2 adds a stride-4 (P2) head (`yolo26n-p2.yaml`, started from `yolo26n.pt` weights). It costs about 1.6× compute per tile, so it runs only after E3, and only if E3 still misses much more below 16 px than at 32 px and over. It replaces the old E2 (the larger `yolo26s`), because the diagnosis found the baseline was not undertrained.
+YOLO26 is anchor-free, so there are no anchors to tune. The equivalent lever is where the model predicts: its finest head is stride 8, so an 8 px item is one grid cell. E2 adds a stride-4 (P2) head (`yolo26n-p2.yaml`, started from `yolo26n.pt` weights). Only 360 of its 902 weight tensors come from `yolo26n.pt` (the backbone; the head is new), so it starts less pretrained than E3. It costs about 1.6× compute per tile, so it runs only after E3, and only if E3 still misses much more below 16 px than at 32 px and over. It replaces the old E2 (the larger `yolo26s`), because the diagnosis found the baseline was not undertrained.
 
 ## Mixing Pune and TACO
 
@@ -29,3 +29,7 @@ YOLO26 is anchor-free, so there are no anchors to tune. The equivalent lever is 
 ## What decides
 
 With no Pune validation set, the checkpoint and threshold are chosen on the street-like TACO proxy, and the only Pune number is the single locked test run. That is weaker than validating on Pune: a proxy win may not transfer. If the proxy and the final Pune result disagree badly, a small held-out Pune validation set is the next thing to add (`split_pune_labels.py` without `--all-train` still does this).
+
+## Checked so far
+
+On CPU with Ultralytics 8.4.155, one epoch on a toy dataset: the E1 and E2 configs train, the zoom range reaches the trainer as `[0.75, 1.5]`, the P2 model loads `yolo26n.pt` weights, and both export to the `[1, 3, 640, 640]` → `[1, 100, 6]` ONNX format the API requires. The 101 Python tests pass. No real training has run; the effect on recall is unmeasured.
