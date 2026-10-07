@@ -53,3 +53,15 @@ def test_split_refuses_test_sequences(tmp_path):
     (tmp_path/'test.json').write_text(json.dumps({'views': [{'sequence': 'seq-g2'}]}))
     with pytest.raises(ValueError, match='locked test sequences'):
         split(export, tmp_path/'candidates.json', tmp_path/'train', tmp_path/'val', tmp_path/'test.json')
+
+
+def test_kept_validation_reuses_earlier_groups(tmp_path):
+    export = make_export(tmp_path, [('g1', 3), ('g1', 0), ('g2', 2), ('g3', 1), ('g4', 0), ('g4', 4)])
+    first = split(export, tmp_path/'candidates.json', tmp_path/'train1', tmp_path/'val1', tmp_path/'test.json')
+    result = split(export, tmp_path/'candidates.json', tmp_path/'train2', tmp_path/'val2', tmp_path/'test.json',
+                   keep_validation=tmp_path/'val1/evaluation-lock.json')
+    assert result['validation_groups'] == sorted(first['validation_groups'])
+    assert 'kept from val1' in result['rule']
+    with pytest.raises(ValueError, match='not a Pune validation'):
+        split(export, tmp_path/'candidates.json', tmp_path/'train3', tmp_path/'val3', tmp_path/'test.json',
+              keep_validation=tmp_path/'train1/evaluation-lock.json')

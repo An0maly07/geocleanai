@@ -70,3 +70,19 @@ Precision, recall, TP/FP/FN at the locked threshold and at 0.35; recall by label
 - [ ] Uncached six-view (or 24-tile) analysis within the 45 s processing check and the 60 s hosting limit on the Vercel preview; cold and warm measured separately over ≥ 5 panoramas.
 - [ ] The rejected baseline is not installed (the backend refuses its hash; the guard test passes).
 - [ ] Hitting the numbers alone does not finish the work: panorama validation above must also pass.
+
+## Round 2: Pune-focused second stage (7 October 2026)
+
+After E1 (Pune test: 9 of 54 found, precision 8%) and with all 960 views labelled, round 2 continues from E1's selected checkpoint instead of running E2/E3 first. The three-experiment limit above applies to the first-stage experiments E1–E3; a second stage (`training/experiments/s1-*.json`) must name its starting checkpoint and its SHA-256.
+
+```
+python training/split_pune_labels.py --export data/pune-label-v2-export-full --train-output data/pune-train-v2 --val-output data/pune-val-v2 --keep-validation data/pune-val-v1/evaluation-lock.json
+python training/build_pune_focus.py
+python training/package_colab_v2.py --output artifacts/colab/geocleanai-colab-r2.zip --datasets pune-focus-v1 pune-val-v2
+python training/build_round2_notebook.py
+```
+
+- **Split:** validation keeps E1's three location groups (now 57 panoramas, 342 views, 253 litter regions; 36% of panoramas and 29% of regions), so no validation street was ever trained on. Training: 101 panoramas, 604 views, 607 regions.
+- **Data (`pune-focus-v1`):** Pune training views ×2 (1,208), 300 TACO photos and 300 street-like tiles (67% Pune); validation is Pune only, so early stopping and `best.pt` follow Pune.
+- **Config (`s1-pune-focus`):** start from E1 `epoch5.pt` (hash-checked), AdamW lr0 0.0005, 30 epochs, patience 8, augmentation scale 0.25.
+- **Notebook (`GeoCleanAI_R2_PuneFocus.ipynb`):** notebook B with new Drive folders (`experiments-r2`, `selection-r2`); E1's checkpoint and the baseline are scored on the same validation views, and E1 is selected if round 2 does not beat it. The locked test is run once for the selected candidate and the result discloses that it is the second candidate on that test set.

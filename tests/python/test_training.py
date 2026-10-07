@@ -39,12 +39,14 @@ def test_experiment_configs_are_valid_and_defaults_match_baseline(tmp_path):
         {'model': 'yolo26n.pt', 'imgsz': 640, 'batch': 8, 'epochs': 50, 'patience': 10, 'seed': 42}
     root = Path(__file__).resolve().parents[2]
     configs = sorted((root/'training/experiments').glob('*.json'))
-    assert len(configs) <= 3  # At most three experiments.
+    assert len([p for p in configs if p.name.startswith('e')]) <= 3  # At most three first-stage experiments (E1-E3).
     for path in configs:
         config = load_config(path, {})
         assert config['ultralytics_version'] == '8.4.155' and config['seed'] == 42 and config['imgsz'] == 640
         assert config['batch_fallbacks'] == sorted(config['batch_fallbacks'], reverse=True)
         assert config['question']
+        if path.name.startswith('s'):  # Second stages continue from a named, hash-checked checkpoint.
+            assert config['model'].endswith('.pt') and len(config['model_sha256']) == 64
     typo = tmp_path/'typo.json'; typo.write_text(json.dumps({'epoch': 5}))
     with pytest.raises(ValueError, match='Unknown config keys'):
         load_config(typo, {})

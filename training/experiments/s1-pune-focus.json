@@ -1,0 +1,33 @@
+{
+  "imgsz": 640,
+  "batch": 16,
+  "batch_fallbacks": [
+    8,
+    4
+  ],
+  "epochs": 30,
+  "patience": 8,
+  "seed": 42,
+  "deterministic": true,
+  "workers": 2,
+  "save_period": 5,
+  "ultralytics_version": "8.4.155",
+  "augment": {
+    "degrees": 0.0,
+    "flipud": 0.0,
+    "perspective": 0.0,
+    "scale": 0.25
+  },
+  "train_args": {
+    "optimizer": "AdamW",
+    "lr0": 0.0005,
+    "warmup_epochs": 1
+  },
+  "confidence_threshold": 0.35,
+  "name": "s1-pune-focus",
+  "question": "Second fine-tuning stage. Does continuing from the selected E1 checkpoint on mostly Pune views (all 946 labelled; the Pune training split shown twice per epoch plus 300 TACO photos and 300 street-like tiles so general litter is not forgotten), with early stopping and best.pt judged on Pune validation instead of the TACO proxy, raise Pune validation recall? Lower learning rate than E1 because the start is already fine-tuned; scale 0.25 (default 0.5) so augmentation shrinks small litter less. Validation keeps E1's location groups, so no validation street was ever trained on.",
+  "model": "/content/drive/MyDrive/GeoCleanAI/experiments/e1-domain-matched-20261007-140223/runs/e1-domain-matched/weights/epoch5.pt",
+  "model_sha256": "1c6106a71824d7a12c0a595af3824503f805caa51b398dcbdca282c646e426e5",
+  "data": "pune-focus-v1/dataset.yaml",
+  "version": "pune-litter-s1"
+}

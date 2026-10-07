@@ -104,3 +104,38 @@ def test_original_detail_preserves_labels_and_caches_projection(review_data):
     client = TestClient(create_app(review_data))
     assert client.get('/api/views').json()[0]['inspection_available']
     assert client.get('/inspection/.env.local').status_code == 404
+
+
+def write_suggestions(root, threshold=.3, sha=None):
+    import hashlib
+    views = {}
+    for i in range(3):
+        name = f'{i}_front.jpg'
+        digest = sha or hashlib.sha256((root / 'images' / name).read_bytes()).hexdigest()
+        views[name] = {'sha256': digest, 'boxes': [[.1, .1, .2, .2, .9], [.5, .5, .6, .6, .1]]}
+    data = {'detector': 'test-detector', 'threshold': threshold, 'views': views,
+            'evaluation': {'chosen': {'precision': .4, 'recall': .5}}}
+    path = root.parent / 'suggestions.json'
+    path.write_text(json.dumps(data))
+    return path
+
+
+def test_suggestions_are_shown_only_on_unreviewed_photos_and_box_sources_are_kept(review_data):
+    from training.import_suggestions import install
+    install(write_suggestions(review_data), review_data)
+    client = TestClient(create_app(review_data))
+    assert post(client, '1_front.jpg', box_sources=['ai'], suggestions_shown=1).status_code == 200
+    views = {v['file_name']: v for v in client.get('/api/views').json()}
+    assert views['0_front.jpg']['suggestions'] == [[.1, .1, .2, .2, .9]]  # below-threshold box hidden
+    assert views['1_front.jpg']['suggestions'] == []  # reviewed: no suggestions
+    assert views['1_front.jpg']['review']['box_sources'] == ['ai']
+    assert client.get('/api/assist').json()['precision'] == .4
+    assert post(client, '2_front.jpg', box_sources=['ai', 'hand']).status_code == 422
+    assert post(client, '2_front.jpg', box_sources=['robot']).status_code == 422
+
+
+def test_suggestions_for_changed_images_are_not_installed(review_data):
+    from training.import_suggestions import install
+    result = install(write_suggestions(review_data, sha='0' * 64), review_data)
+    assert result['views_with_suggestions'] == 0 and result['skipped_changed_images'] == 3
+    assert all(v['suggestions'] == [] for v in TestClient(create_app(review_data)).get('/api/views').json())

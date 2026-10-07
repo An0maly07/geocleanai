@@ -14,6 +14,8 @@
 
 One page for the whole team: see `docs/TEAM_LABELLING.md`.
 
+**Progress (7 October 2026): 958 / 960 views reviewed** (242 litter, 702 clean, 14 skipped); photos 443 and 720 remain. Vineet labelled 1–240, Jayesh 241–720 (481–719 merged from his zip), Siddhi 721–960 (merged from `siddhihingne12/GeoCleanAI_updated`, review files only). Siddhi also labelled photos 1–50; Vineet's labels were kept and hers are in `data/pune-label-v2/second-opinions/siddhi/` for an agreement check (27 of 50 views differ). The first training split (`pune-train-v1`/`pune-val-v1`) used only the 527 views available at the time; the next run needs a new split version.
+
 ```powershell
 .\.venv\Scripts\python.exe -m training.review_server --data data/pune-label-v2
 ```
@@ -26,3 +28,11 @@ One page for the whole team: see `docs/TEAM_LABELLING.md`.
 ```
 
 The split is fixed in advance and uses label counts only (never model results). Whole location groups go to one side. Validation takes about a third of the panoramas and 20–45% of the litter regions, and the largest group stays in training. Output: `data/pune-train-v1/` and `data/pune-val-v1/`, each with a hash lock.
+
+## Show the labels in the app
+
+```powershell
+.\.venv\Scripts\python.exe scripts\build_team_labels.py
+```
+
+This writes `public/team-labels/` (an index plus the labelled views that contain litter). The website then lists **Team-labelled street views** and offers a **Team labels** switch next to **AI detections** for those panoramas. Only panoramas with all six views reviewed are included. The markers are the team's hand-drawn boxes, placed with the same geometry as model detections; the app labels them as human labels, never as AI output. Re-run it after merging more reviews.

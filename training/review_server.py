@@ -24,6 +24,9 @@ class Review(BaseModel):
     reviewer: str = Field(min_length=1, max_length=100)
     notes: str = Field(default='', max_length=2000)
     revision: int = Field(default=0, ge=0)
+    # Where each box came from: 'hand' (drawn) or 'ai' (an accepted suggestion). Empty for older clients.
+    box_sources: list[str] = Field(default_factory=list)
+    suggestions_shown: int = Field(default=0, ge=0, le=500)
 
 
 class ReviewStore:
@@ -51,6 +54,19 @@ class ReviewStore:
                 with Image.open(source) as panorama:
                     detail_size = min(1920, max(640, panorama.width // 3))
                 self.inspections[name] = (source, row['view_id'], detail_size)
+        self.assist, self.suggestions = None, {}
+        if (self.root / 'suggestions.json').is_file():
+            self.load_suggestions(json.loads((self.root / 'suggestions.json').read_text(encoding='utf-8')))
+
+    def load_suggestions(self, data):
+        """AI box suggestions for labellers. Only boxes for unchanged images, at or above the scored threshold."""
+        threshold = float(data['threshold'])
+        for name, item in data['views'].items():
+            if name in self.hashes and item['sha256'] == self.hashes[name]:
+                self.suggestions[name] = [box for box in item['boxes'] if box[4] >= threshold]
+        chosen = data.get('evaluation', {}).get('chosen', {})
+        self.assist = {'detector': data['detector'], 'threshold': threshold, 'views': len(self.suggestions),
+                       'precision': chosen.get('precision'), 'recall': chosen.get('recall')}
 
     def inspection(self, name):
         if name not in self.inspections:
@@ -97,6 +113,8 @@ class ReviewStore:
                 raise HTTPException(422, 'Boxes must stay inside the image')
             if box[0] >= box[2] or box[1] >= box[3]:
                 raise HTTPException(422, 'Boxes must have positive width and height')
+        if review.box_sources and (len(review.box_sources) != len(review.boxes) or not set(review.box_sources) <= {'hand', 'ai'}):
+            raise HTTPException(422, 'Each box needs a source: hand or ai')
         with self.lock:
             previous = self.read(name)
             if review.revision != previous['revision']:
@@ -168,9 +186,18 @@ def create_app(root: Path):
 
     @app.get('/api/views')
     def views():
-        return [{**row, 'review': store.read(row['file_name']),
-                 'inspection_available': row['file_name'] in store.inspections}
-                for row in store.views]
+        rows = []
+        for row in store.views:
+            review = store.read(row['file_name'])
+            # Suggestions only on photos nobody has reviewed, so saved labels are never second-guessed by the AI.
+            suggestions = store.suggestions.get(row['file_name'], []) if review['status'] == 'unreviewed' else []
+            rows.append({**row, 'review': review, 'suggestions': suggestions,
+                         'inspection_available': row['file_name'] in store.inspections})
+        return rows
+
+    @app.get('/api/assist')
+    def assist():
+        return store.assist or {}
 
     @app.get('/inspection/{name}')
     def inspection(name: str):

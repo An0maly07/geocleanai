@@ -15,7 +15,10 @@ from pathlib import Path
 # Settings the first baseline used; a config only needs to state what it changes.
 DEFAULTS = {'model': 'yolo26n.pt', 'imgsz': 640, 'batch': 8, 'epochs': 50, 'patience': 10, 'seed': 42,
             'deterministic': True, 'workers': 2, 'save_period': 5, 'batch_fallbacks': [], 'augment': {},
-            'ultralytics_version': None, 'confidence_threshold': .35}
+            'ultralytics_version': None, 'confidence_threshold': .35,
+            # Other Ultralytics training arguments (e.g. lr0, optimizer), and the SHA-256 the starting
+            # checkpoint must have when 'model' is an earlier fine-tuned checkpoint rather than a public one.
+            'train_args': {}, 'model_sha256': None}
 LOGS = ('results.csv', 'args.yaml', 'results.png', 'BoxPR_curve.png', 'BoxF1_curve.png', 'confusion_matrix.png',
         'labels.jpg', 'train_batch0.jpg', 'val_batch0_labels.jpg', 'val_batch0_pred.jpg')
 
@@ -64,7 +67,7 @@ def fit(config: dict, data: Path, output: Path):
                         patience=config['patience'], seed=config['seed'], deterministic=config['deterministic'],
                         workers=config['workers'], save_period=config['save_period'],
                         device=0 if torch.cuda.is_available() else 'cpu',
-                        project=str(output/'runs'), name=name, exist_ok=False, **config['augment'])
+                        project=str(output/'runs'), name=name, exist_ok=False, **config['augment'], **config['train_args'])
             return model, batch
         except torch.cuda.OutOfMemoryError:
             print(f'Out of GPU memory at batch {batch}; trying the next fallback.')
@@ -82,6 +85,8 @@ def train(args):
     config.setdefault('name', 'litter')
     config['version'] = getattr(args, 'version', None) or config.get('version') or 'pune-litter-candidate'
     started_version = check_version(config['ultralytics_version'])
+    if config['model_sha256'] and sha256(Path(config['model'])) != config['model_sha256']:
+        raise ValueError(f"{config['model']} is not the starting checkpoint this config names (SHA-256 differs).")
     source_yaml = args.data.resolve()
     resolved = resolved_dataset(source_yaml)
     args.output.mkdir(parents=True, exist_ok=True)
