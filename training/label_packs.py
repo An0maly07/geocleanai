@@ -44,9 +44,7 @@ README = '''GeoCleanAI labelling pack for {member}
 Needs Python 3.11 or newer (python.org). Windows: double-click START-LABELLING.bat.
 Mac/Linux: run  sh start-labelling.sh . Then open http://127.0.0.1:8765 .
 
-1. PUNE VIEWS ({views} views). Start with the {calibration} CALIBRATION views (names listed in
-   pack.json -> "calibration"); every team member labels these same views so the team can
-   compare. Then label the rest.
+1. PUNE VIEWS ({views} views). {calibration_note}
    - Enter your name. Use the original-detail view to inspect; label litter you can see there,
      even if tiny.
    - One tight box per distinguishable item (wrappers, bottles, cups, cans, cigarette litter,
@@ -76,7 +74,19 @@ def sha256(path: Path) -> str:
         return hashlib.file_digest(file, 'sha256').hexdigest()
 
 
-def make(batch: Path, members: list[str], output: Path, taco_queue: Path | None, calibration_count: int = 2, seed: int = 42, root: Path = ROOT) -> dict:
+def parse_ranges(text: str | None, members: list[str]) -> dict[str, tuple[int, int]] | None:
+    """'1-240,241-480,...' (1-based, inclusive) -> {member: (start, end)} in member order."""
+    if not text:
+        return None
+    parts = [tuple(int(v) for v in part.split('-')) for part in text.split(',')]
+    if len(parts) != len(members) or any(len(p) != 2 or p[0] < 1 or p[1] < p[0] for p in parts):
+        raise ValueError(f'Give one start-end range per member: {text}')
+    return dict(zip(members, parts))
+
+
+def make(batch: Path, members: list[str], output: Path, taco_queue: Path | None, calibration_count: int = 2, seed: int = 42, root: Path = ROOT,
+         photo_ranges: dict | None = None, taco_ranges: dict | None = None, calibration_photos: tuple[int, int] | None = None) -> dict:
+    """photo_ranges / calibration_photos use the photo numbers shown on the review page (1-based)."""
     if output.exists() and any(output.iterdir()):
         raise ValueError(f'{output} is not empty; packs are never rebuilt over earlier ones.')
     if any((batch/'reviews').glob('*.json')):
@@ -85,23 +95,41 @@ def make(batch: Path, members: list[str], output: Path, taco_queue: Path | None,
     views = manifest['views']
     panoramas = sorted({v['image_id'] for v in views})
     by_panorama = {p: [v for v in views if v['image_id'] == p] for p in panoramas}
+    in_photos = lambda start, end: list(dict.fromkeys(v['image_id'] for v in views[start-1:end]))
     rng = random.Random(seed)
-    # Calibration: prefer one older (litter-likely) capture and one recent one, when available.
-    creators = sorted({v['contributor'] for v in views})
-    calibration = []
-    for creator in creators:
-        pool = sorted(p for p in panoramas if by_panorama[p][0]['contributor'] == creator and p not in calibration)
-        if pool and len(calibration) < calibration_count:
-            calibration.append(rng.choice(pool))
-    while len(calibration) < calibration_count:
-        calibration.append(rng.choice(sorted(set(panoramas) - set(calibration))))
-    rest = [p for p in panoramas if p not in calibration]
-    rest.sort(key=lambda p: (by_panorama[p][0].get('sequence') or '', p))
+    if calibration_photos:
+        calibration = in_photos(*calibration_photos)
+    else:
+        # Calibration: prefer one older (litter-likely) capture and one recent one, when available.
+        creators = sorted({v['contributor'] for v in views})
+        calibration = []
+        for creator in creators:
+            pool = sorted(p for p in panoramas if by_panorama[p][0]['contributor'] == creator and p not in calibration)
+            if pool and len(calibration) < calibration_count:
+                calibration.append(rng.choice(pool))
+        while len(calibration) < calibration_count:
+            calibration.append(rng.choice(sorted(set(panoramas) - set(calibration))))
     assignment = {m: [] for m in members}
-    for index, panorama in enumerate(rest):
-        assignment[members[index % len(members)]].append(panorama)
+    if photo_ranges:
+        for member, (start, end) in photo_ranges.items():
+            chosen = in_photos(start, end)
+            partial = [p for p in chosen if not all(start <= views.index(v) + 1 <= end for v in by_panorama[p])]
+            if partial:
+                raise ValueError(f'Range {start}-{end} for {member} splits panoramas {partial}; use whole panoramas.')
+            assignment[member] = [p for p in chosen if p not in calibration]
+        assigned = [p for ps in assignment.values() for p in ps]
+        if len(assigned) != len(set(assigned)) or set(assigned) | set(calibration) != set(panoramas):
+            raise ValueError('Photo ranges must cover every panorama exactly once.')
+    else:
+        rest = [p for p in panoramas if p not in calibration]
+        rest.sort(key=lambda p: (by_panorama[p][0].get('sequence') or '', p))
+        for index, panorama in enumerate(rest):
+            assignment[members[index % len(members)]].append(panorama)
     taco_rows = list(csv.DictReader(taco_queue.open(encoding='utf-8'))) if taco_queue else []
-    taco_share = {m: taco_rows[i::len(members)] for i, m in enumerate(members)}
+    if taco_ranges:
+        taco_share = {m: taco_rows[start-1:end] for m, (start, end) in taco_ranges.items()}
+    else:
+        taco_share = {m: taco_rows[i::len(members)] for i, m in enumerate(members)}
     output.mkdir(parents=True, exist_ok=True)
     summary = {'batch': str(batch), 'created_at': datetime.now(timezone.utc).isoformat(), 'seed': seed,
                'calibration_panoramas': calibration, 'members': {}}
@@ -135,7 +163,10 @@ def make(batch: Path, members: list[str], output: Path, taco_queue: Path | None,
         (pack/'requirements.txt').write_text(REQUIREMENTS)
         (pack/'START-LABELLING.bat').write_text(WINDOWS_START.replace('\n', '\r\n'))
         (pack/'start-labelling.sh').write_text(UNIX_START)
-        (pack/'README.txt').write_text(README.format(member=member, views=len(pack_views), calibration=len(calibration_views), taco=len(taco_share[member])))
+        calibration_note = (f'Start with the {len(calibration_views)} CALIBRATION views (names in pack.json -> "calibration"); '
+                            'every team member labels these same views so the team can compare. Then label the rest.'
+                            if calibration_views else 'Label only the photo numbers your team assigned to you (shown at the top of the page).')
+        (pack/'README.txt').write_text(README.format(member=member, views=len(pack_views), calibration_note=calibration_note, taco=len(taco_share[member])))
         archive = output/f'geocleanai-label-pack-{member}.zip'
         with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as bundle:
             for path in sorted(pack.rglob('*')):
@@ -263,16 +294,22 @@ if __name__ == '__main__':
     make_cmd = sub.add_parser('make')
     make_cmd.add_argument('--batch', type=Path, default=Path('data/pune-label-v2'))
     make_cmd.add_argument('--members', nargs='+', required=True, help='Short names, e.g. A B C D')
-    make_cmd.add_argument('--output', type=Path, default=Path('artifacts/label-packs-v1'))
+    make_cmd.add_argument('--output', type=Path, default=Path('artifacts/label-packs-v2'))
     make_cmd.add_argument('--taco-queue', type=Path, default=Path('data/litter-review/review-queue.csv'))
     make_cmd.add_argument('--calibration', type=int, default=2)
+    make_cmd.add_argument('--photo-ranges', help='Per member, in order: e.g. 1-240,241-480,481-720,721-960 (photo numbers on the review page)')
+    make_cmd.add_argument('--taco-ranges', help='Per member TACO sheet rows, e.g. 1-58,59-116,117-174,175-232')
+    make_cmd.add_argument('--calibration-photos', help='Photos every member labels, e.g. 1-6')
     merge_cmd = sub.add_parser('merge')
     merge_cmd.add_argument('packs', nargs='+', type=Path, help='Returned pack folders or zips')
     merge_cmd.add_argument('--batch', type=Path, default=Path('data/pune-label-v2'))
     merge_cmd.add_argument('--taco-queue', type=Path, default=Path('data/litter-review/review-queue.csv'))
-    merge_cmd.add_argument('--report', type=Path, default=Path('artifacts/label-packs-v1/merge-report.json'))
+    merge_cmd.add_argument('--report', type=Path, default=Path('artifacts/label-packs-v2/merge-report.json'))
     args = parser.parse_args()
     if args.command == 'make':
-        print(json.dumps(make(args.batch, args.members, args.output, args.taco_queue if args.taco_queue.is_file() else None, args.calibration), indent=2))
+        calibration_photos = tuple(int(v) for v in args.calibration_photos.split('-')) if args.calibration_photos else None
+        print(json.dumps(make(args.batch, args.members, args.output, args.taco_queue if args.taco_queue.is_file() else None, args.calibration,
+                              photo_ranges=parse_ranges(args.photo_ranges, args.members), taco_ranges=parse_ranges(args.taco_ranges, args.members),
+                              calibration_photos=calibration_photos), indent=2))
     else:
         print(json.dumps(merge(args.packs, args.batch, args.taco_queue if args.taco_queue.is_file() else None, args.report), indent=2))

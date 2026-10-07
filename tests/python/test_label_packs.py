@@ -92,3 +92,19 @@ def test_make_refuses_a_batch_that_already_has_reviews(tmp_path):
     (batch/'reviews').mkdir(); (batch/'reviews/101_front.jpg.json').write_text('{}')
     with pytest.raises(ValueError, match='already has reviews'):
         make(batch, ['A'], tmp_path/'packs', taco, root=tmp_path)
+
+
+def test_packs_follow_fixed_photo_ranges_and_shared_calibration(tmp_path):
+    batch, taco = make_batch(tmp_path)  # 5 panoramas x 2 views = photos 1-10
+    ranges = {'A': (1, 4), 'B': (5, 10)}
+    summary = make(batch, ['A', 'B'], tmp_path/'packs', taco, root=tmp_path, photo_ranges=ranges,
+                   taco_ranges={'A': (1, 1), 'B': (2, 4)}, calibration_photos=(1, 2))
+    info = {m: json.loads((tmp_path/f'packs/pack-{m}/pack.json').read_text()) for m in 'AB'}
+    assert summary['calibration_panoramas'] == ['101']
+    assert info['A']['calibration'] == info['B']['calibration'] == ['101_front.jpg', '101_back.jpg']
+    assert info['A']['assigned'] == ['102_front.jpg', '102_back.jpg']
+    assert len(info['B']['assigned']) == 6 and info['A']['taco_rows'] == ['0'] and info['B']['taco_rows'] == ['1', '2', '3']
+    with pytest.raises(ValueError, match='splits panoramas'):
+        make(batch, ['A', 'B'], tmp_path/'packs2', taco, root=tmp_path, photo_ranges={'A': (1, 3), 'B': (4, 10)})
+    with pytest.raises(ValueError, match='exactly once'):
+        make(batch, ['A', 'B'], tmp_path/'packs3', taco, root=tmp_path, photo_ranges={'A': (1, 4), 'B': (5, 8)})
