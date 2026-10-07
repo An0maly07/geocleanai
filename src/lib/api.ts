@@ -1,4 +1,4 @@
-import type { Analysis, Health, Panorama, PanoramaAnalysis, Place, ViewSpec } from '../types'
+import type { Analysis, Health, Panorama, PanoramaAnalysis, Place, TeamPanorama, ViewSpec } from '../types'
 export class ApiError extends Error {
   constructor(message: string, public code: string, public status: number) { super(message) }
 }
@@ -10,6 +10,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 export const api = {
   health: () => request<Health>('/health'),
+  // Static file from scripts/build_team_labels.py; absent in builds without it.
+  teamLabels: async (): Promise<Record<string, TeamPanorama>> => {
+    const response = await fetch('/team-labels/index.json')
+    return response.ok && response.headers.get('content-type')?.includes('json') ? response.json() : {}
+  },
   search: (q: string, signal?: AbortSignal) => request<{ places: Place[] }>(`/search?q=${encodeURIComponent(q)}`, { signal }),
   panoramas: (lat: number, lng: number, signal?: AbortSignal) => request<{ panoramas: Panorama[]; truncated: boolean }>(`/panoramas?lat=${lat}&lng=${lng}`, { signal }),
   panorama: (id: string, signal?: AbortSignal) => request<Panorama>(`/panoramas/${id}`, { signal }),

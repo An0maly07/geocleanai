@@ -6,10 +6,12 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 import { AlertCircle, Compass, LocateFixed, MapPin } from 'lucide-react'
 import type { Panorama, Place } from '../types'
 import { Button } from './ui/button'
+import { currentTheme, useTheme, type Theme } from '../lib/theme'
 
 export const PUNE_CENTER: [number, number] = [73.8567, 18.5204]
 export const PUNE_BOUNDS: [[number, number], [number, number]] = [[73.70, 18.40], [74.05, 18.70]]
 maplibregl.setWorkerUrl(workerUrl)
+const mapStyle = (theme: Theme) => `https://tiles.openfreemap.org/styles/${theme === 'dark' ? 'dark' : 'liberty'}`
 export function inPune(lat: number, lng: number) { return lat >= 18.40 && lat <= 18.70 && lng >= 73.70 && lng <= 74.05 }
 
 interface Props { panoramas: Panorama[]; selected: Panorama | null; focus: Place | null; onPoint: (lat: number, lng: number) => void; onSelect: (p: Panorama) => void }
@@ -17,11 +19,12 @@ export default function MapPanel(props: Props) {
   const container = useRef<HTMLDivElement>(null), mapRef = useRef<LibreMap | null>(null), markers = useRef<Marker[]>([]), placeMarker = useRef<Marker | null>(null)
   const latest = useRef(props); latest.current = props
   const [error, setError] = useState(false), [ready, setReady] = useState(false)
+  const theme = useTheme(), styled = useRef(currentTheme())
   useEffect(() => {
     if (!container.current) return
     let map: LibreMap
     try {
-      map = new maplibregl.Map({ container: container.current, style: 'https://tiles.openfreemap.org/styles/liberty', center: PUNE_CENTER, zoom: 12.5, maxBounds: PUNE_BOUNDS, minZoom: 10, maxZoom: 19, attributionControl: { compact: true } })
+      map = new maplibregl.Map({ container: container.current, style: mapStyle(styled.current), center: PUNE_CENTER, zoom: 12.5, maxBounds: PUNE_BOUNDS, minZoom: 10, maxZoom: 19, attributionControl: { compact: true } })
     } catch { setError(true); return }
     mapRef.current = map
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right')
@@ -32,6 +35,12 @@ export default function MapPanel(props: Props) {
     observer.observe(container.current)
     return () => { observer.disconnect(); markers.current.forEach(m => m.remove()); placeMarker.current?.remove(); map.remove(); mapRef.current = null }
   }, [])
+  useEffect(() => {
+    // Pins are DOM markers, so they survive a basemap style swap.
+    if (!mapRef.current || styled.current === theme) return
+    styled.current = theme
+    mapRef.current.setStyle(mapStyle(theme))
+  }, [theme])
   useEffect(() => {
     const map = mapRef.current
     if (!map || !ready) return
@@ -64,7 +73,7 @@ export default function MapPanel(props: Props) {
     if (location && mapRef.current && inPune(location.lat, location.lng)) mapRef.current.flyTo({ center: [location.lng, location.lat], zoom: 16, duration: 900 })
   }, [props.selected?.id, ready])
   return <section className="panel map-panel" aria-label="Pune location map">
-    <div className="panel-heading"><span className="eyebrow"><span className="step-number">01</span> FIND A STREET</span><span className="subtle-label"><MapPin size={13} /> Pune only</span></div>
+    <div className="panel-heading"><span className="eyebrow"><span className="step-number">01</span> FIND A STREET</span></div>
     <div className="map-stage">
       <div ref={container} className="map-container" data-testid="map-container" />
       {!ready && !error && <div className="map-loading"><Compass className="animate-spin" size={20} /><span>Opening Pune map…</span></div>}
@@ -73,6 +82,5 @@ export default function MapPanel(props: Props) {
       <Button variant="outline" size="icon" className="recenter" title="Recenter on Pune" aria-label="Recenter on Pune" onClick={() => mapRef.current?.flyTo({ center: PUNE_CENTER, zoom: 12.5 })}><LocateFixed /></Button>
       <div className="map-key"><span className="key-dot place"/> Your place <span className="key-dot" /> Street photo <span className="key-dot outlined" /> Open photo</div>
     </div>
-    <div className="panel-foot"><span>Camera locations · imagery varies by street</span><span>18.5204° N, 73.8567° E</span></div>
   </section>
 }

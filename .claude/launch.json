@@ -1,0 +1,39 @@
+﻿{
+    "version":  "0.0.1",
+    "configurations":  [
+                           {
+                               "name":  "backend",
+                               "runtimeExecutable":  ".venv/Scripts/python.exe",
+                               "runtimeArgs":  [
+                                                   "-m",
+                                                   "uvicorn",
+                                                   "backend.app:app",
+                                                   "--host",
+                                                   "127.0.0.1",
+                                                   "--port",
+                                                   "8000"
+                                               ],
+                               "port":  8000
+                           },
+                           {
+                               "name":  "frontend",
+                               "runtimeExecutable":  "npm.cmd",
+                               "runtimeArgs":  [
+                                                   "run",
+                                                   "dev"
+                                               ],
+                               "port":  5173
+                           },
+                           {
+                               "name":  "labelling",
+                               "runtimeExecutable":  ".venv/Scripts/python.exe",
+                               "runtimeArgs":  [
+                                                   "-m",
+                                                   "training.review_server",
+                                                   "--data",
+                                                   "data/pune-label-v2"
+                                               ],
+                               "port":  8765
+                           }
+                       ]
+}

@@ -7,5 +7,7 @@ export interface Detection { id: string; label: string; confidence: number; box:
 export interface Analysis { image_id: string; model_version: string; detections: Detection[]; elapsed_ms: number; cached: boolean; view: ViewSpec; preview: string; captured_at: number }
 export interface PanoramaDetection extends Detection { view_id: string }
 export interface AnalysedView { id: string; view: ViewSpec; preview: string }
-export interface PanoramaAnalysis { image_id: string; model_version: string; analysis_version: string; detections: PanoramaDetection[]; views: AnalysedView[]; elapsed_ms: number; cached: boolean; captured_at: number }
+// source 'team' marks hand-drawn labels shown in place of model output; they must never be presented as AI results.
+export interface PanoramaAnalysis { image_id: string; model_version: string; analysis_version: string; detections: PanoramaDetection[]; views: AnalysedView[]; elapsed_ms: number; cached: boolean; captured_at: number; source?: 'model' | 'team'; reviewers?: string[] }
+export interface TeamPanorama { panorama: Panorama; analysis_version: string; detections: PanoramaDetection[]; views: AnalysedView[]; reviewers: string[]; unclear_views: string[] }
 export interface Health { status: 'ready' | 'setup_required'; checks: Record<string, boolean>; model_version: string | null; samples: Panorama[] }

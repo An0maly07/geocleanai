@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Viewer, SpotTag, PointGeometry, type TagComponent, type ViewerImageEvent } from 'mapillary-js'
 import 'mapillary-js/dist/mapillary.css'
-import { ArrowUpRight, Camera, CircleHelp, Expand, LoaderCircle, Move, Rotate3D, Sparkles } from 'lucide-react'
+import { ArrowUpRight, Camera, CircleHelp, Expand, LoaderCircle, Sparkles, Users } from 'lucide-react'
 import { Button } from './ui/button'
 import type { PanoramaAnalysis, PanoramaDetection, Panorama } from '../types'
 import { inPune } from './MapPanel'
@@ -76,9 +76,11 @@ export function StreetViewer(props: Props) {
     component.removeAll()
     const result = props.analysis
     if (!result || result.image_id !== loadedImage || result.image_id !== props.selected?.id) return
+    const team = result.source === 'team'
     const tags = result.detections.map((d, i) => {
       const active = props.activeDetection?.id === d.id
-      const tag = new SpotTag(d.id, new PointGeometry(d.tag), { color: active ? 0xffd166 : 0xd8f3a5, textColor: 0x173e32, text: `Litter ${i + 1} · ${Math.round(d.confidence * 100)}%`, editable: false })
+      // Human labels get their own colour and wording so they are never mistaken for AI output.
+      const tag = new SpotTag(d.id, new PointGeometry(d.tag), { color: active ? 0xffd166 : team ? 0x9fd3ff : 0xd8f3a5, textColor: 0x173e32, text: team ? (active ? `Team label ${i + 1}` : `${i + 1}`) : `Litter ${i + 1} · ${Math.round(d.confidence * 100)}%`, editable: false })
       tag.on('click', () => latest.current.onDetection(d))
       return tag
     })
@@ -92,24 +94,21 @@ export function StreetViewer(props: Props) {
   }, [props.activeDetection, props.analysis?.image_id, props.selected?.id, loadedImage])
 
   return <section className="panel street-panel" aria-label="Street panorama viewer">
-    <div className="panel-heading"><span className="eyebrow"><span className="step-number">02</span> LOOK AROUND</span><span className="subtle-label"><Rotate3D size={15}/> 360° street view</span></div>
+    <div className="panel-heading"><span className="eyebrow"><span className="step-number">02</span> LOOK AROUND</span></div>
     <div className={`street-stage ${props.selected && token ? 'has-image' : ''}`}>
       <div ref={container} className="street-container" data-testid="street-viewer"/>
       {(!props.selected || !token) && <div className="street-empty">
-        <div className="orbit orbit-outer"/><div className="orbit orbit-inner"/>
-        <div className="viewfinder"><Camera size={34} strokeWidth={1.3}/><span className="viewfinder-corner"/></div>
-        <span className="mini-label">A DIFFERENT PERSPECTIVE</span>
-        <h2>Your street-level window.</h2>
-        <p>{!token ? 'Street imagery is not connected yet. You can still choose a place on the map.' : 'Find a place, then choose Open street view. Litter suggestions will be marked automatically.'}</p>
-        <div className="empty-instructions"><span><Move size={14}/> Look around</span><span><Sparkles size={14}/> Litter marked for you</span></div>
+        <Camera size={30} strokeWidth={1.4}/>
+        <h2>No street view open</h2>
+        <p>{!token ? 'Street imagery is not connected yet. You can still choose a place on the map.' : 'Pick a place or a team-labelled street, then drag to look around.'}</p>
       </div>}
       {loading && props.selected && <div className="viewer-loading" role="status"><LoaderCircle className="animate-spin" size={20}/> Opening panorama…</div>}
       {error && props.selected && <div className="viewer-error" role="alert"><CircleHelp size={18}/><span>{error}</span><Button size="sm" variant="outline" onClick={() => setViewerRetry(value => value + 1)}>Retry viewer</Button></div>}
       {props.selected && token && <Button variant="outline" size="icon" className="expand-view" aria-label="Expand street view" onClick={() => container.current?.parentElement?.requestFullscreen().catch(() => setError('Fullscreen is unavailable in this browser.'))}><Expand/></Button>}
     </div>
     <div className="scan-toolbar" role="status">
-      <div><span className="scan-toolbar-title">{props.scanning ? 'Finding litter…' : props.analysis ? `${props.analysis.detections.length} suspected litter ${props.analysis.detections.length === 1 ? 'item' : 'items'} marked` : 'Automatic litter markings'}</span><span className="scan-toolbar-sub">{props.scanning ? 'Look around while all directions are checked.' : props.analysis ? 'Select a marker to inspect it. Check the photo date below.' : props.unavailable || 'Open a street view to start. No scan button needed.'}</span></div>
-      {props.scanning ? <LoaderCircle className="animate-spin" size={20}/> : <Sparkles size={20}/>}
+      <div><span className="scan-toolbar-title">{props.scanning ? 'Finding litter…' : props.analysis?.source === 'team' ? `${props.analysis.detections.length} litter ${props.analysis.detections.length === 1 ? 'item' : 'items'} labelled by our team` : props.analysis ? `${props.analysis.detections.length} suspected litter ${props.analysis.detections.length === 1 ? 'item' : 'items'} marked` : 'Automatic litter markings'}</span><span className="scan-toolbar-sub">{props.scanning ? 'Look around while all directions are checked.' : props.analysis?.source === 'team' ? 'Human labels, not AI. Drag to look around; select a marker to inspect it.' : props.analysis ? 'Select a marker to inspect it. Check the photo date below.' : props.unavailable || 'Open a street view to start. No scan button needed.'}</span></div>
+      {props.scanning ? <LoaderCircle className="animate-spin" size={20}/> : props.analysis?.source === 'team' ? <Users size={20}/> : <Sparkles size={20}/>}
     </div>
     {props.selected && <div className="image-credit"><span>Captured {props.selected.captured_at ? new Date(props.selected.captured_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : 'date unavailable'} · {props.selected.creator}</span><a href={`https://www.mapillary.com/app/?pKey=${props.selected.id}`} target="_blank" rel="noreferrer">Mapillary · CC BY-SA <ArrowUpRight size={12}/></a></div>}
   </section>

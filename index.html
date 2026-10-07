@@ -3,7 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#f6f7f3" />
+    <meta name="theme-color" content="#f7f8f4" />
+    <script>
+      // Apply the saved theme (else the system setting) before first paint; src/lib/theme.ts keeps it in sync.
+      try { var t = localStorage.getItem('geoclean-theme') } catch (e) {}
+      if (t !== 'light' && t !== 'dark') t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+      document.documentElement.dataset.theme = t
+      if (t === 'dark') document.querySelector('meta[name="theme-color"]').setAttribute('content', '#0e1411')
+    </script>
     <meta name="description" content="Explore Pune street panoramas and find visible litter with a locally trained AI detector. A college research prototype." />
     <title>GeoCleanAI · A clearer view of Pune</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />

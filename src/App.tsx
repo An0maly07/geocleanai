@@ -1,10 +1,11 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowRight, ArrowUpRight, CircleHelp, Clock3, Crosshair, ExternalLink, Leaf, LoaderCircle, MapPin, Search, ShieldCheck, SlidersHorizontal, Sparkles, X } from 'lucide-react'
+import { ArrowRight, ArrowUpRight, CircleHelp, Crosshair, ExternalLink, Leaf, LoaderCircle, MapPin, Moon, Search, ShieldCheck, Sun, X } from 'lucide-react'
 import { Button } from './components/ui/button'
 import { InfoDialog } from './components/InfoDialog'
 import { ResultsPanel } from './components/ResultsPanel'
 import { api } from './lib/api'
-import type { PanoramaAnalysis, PanoramaDetection, Health, Panorama, Place } from './types'
+import { setTheme, useTheme } from './lib/theme'
+import type { PanoramaAnalysis, PanoramaDetection, Health, Panorama, Place, TeamPanorama } from './types'
 
 const MapPanel = lazy(() => import('./components/MapPanel'))
 const StreetViewer = lazy(() => import('./components/StreetViewer').then(m => ({ default: m.StreetViewer })))
@@ -25,10 +26,13 @@ export default function App() {
   const [selected, setSelected] = useState<Panorama | null>(null), [notice, setNotice] = useState('')
   const [analysis, setAnalysis] = useState<PanoramaAnalysis | null>(null), [scanning, setScanning] = useState(false), [scanError, setScanError] = useState(''), [activeDetection, setActiveDetection] = useState<PanoramaDetection | null>(null)
   const [retry, setRetry] = useState(0)
+  const [team, setTeam] = useState<Record<string, TeamPanorama>>({}), [mode, setMode] = useState<'ai' | 'team'>('ai'), [allTeam, setAllTeam] = useState(false)
+  const theme = useTheme()
   const viewerColumn = useRef<HTMLDivElement>(null), searchAbort = useRef<AbortController | null>(null), panoAbort = useRef<AbortController | null>(null), scanAbort = useRef<AbortController | null>(null)
   const searchSerial = useRef(0), panoSerial = useRef(0), scanSerial = useRef(0), selectedId = useRef('')
 
   const refreshHealth = useCallback(() => { api.health().then(h => { setHealth(h); setHealthError(false) }).catch(() => setHealthError(true)) }, [])
+  useEffect(() => { api.teamLabels().then(setTeam).catch(() => setTeam({})) }, [])
   useEffect(() => { refreshHealth(); return () => { searchAbort.current?.abort(); panoAbort.current?.abort(); scanAbort.current?.abort() } }, [refreshHealth])
   const resetScan = useCallback(() => { scanSerial.current++; scanAbort.current?.abort(); setScanning(false); setAnalysis(null); setActiveDetection(null); setScanError('') }, [])
   const inspectDetection = useCallback((d: PanoramaDetection) => setActiveDetection({ ...d }), [])
@@ -74,9 +78,18 @@ export default function App() {
   const configured = Boolean(health?.checks.model && health?.checks.mapillary && health?.checks.shared_cache)
   const browserToken = Boolean(import.meta.env.VITE_MAPILLARY_CLIENT_TOKEN)
   const supported = Boolean(selected?.is_pano && selected.lat >= 18.40 && selected.lat <= 18.70 && selected.lng >= 73.70 && selected.lng <= 74.05)
-  const unavailable = healthError ? 'Litter detection is unavailable while the service is offline.' : !health ? 'Checking litter detection availability…' : !configured ? 'Litter markings are unavailable until the trained model and service connections are ready.' : !browserToken ? 'Street imagery is unavailable until the image connection is ready.' : selected && !supported ? 'Litter detection is available only for panoramas inside the Pune demo area.' : ''
+  const teamEntry = selected ? team[selected.id] : undefined
+  // Team labels show when chosen, or when no model is available for this panorama.
+  const showTeam = Boolean(teamEntry && supported && browserToken && (mode === 'team' || !configured || healthError))
+  const unavailable = showTeam ? '' : healthError ?'Litter detection is unavailable while the service is offline.' : !health ? 'Checking litter detection availability…' : !configured ? 'Litter markings are unavailable until the trained model and service connections are ready.' : !browserToken ? 'Street imagery is unavailable until the image connection is ready.' : selected && !supported ? 'Litter detection is available only for panoramas inside the Pune demo area.' : ''
 
   useEffect(() => {
+    if (showTeam && selected && teamEntry) {
+      resetScan()
+      const labels: PanoramaAnalysis = { image_id: selected.id, model_version: 'team-labels', analysis_version: teamEntry.analysis_version, detections: teamEntry.detections, views: teamEntry.views, elapsed_ms: 0, cached: true, captured_at: teamEntry.panorama.captured_at, source: 'team', reviewers: teamEntry.reviewers }
+      setAnalysis(labels); setActiveDetection(labels.detections[0] ?? null)
+      return
+    }
     if (!selected?.id || !supported || !configured || !browserToken || healthError) { resetScan(); return }
     const sequence = ++scanSerial.current, imageId = selected.id
     const controller = new AbortController(); scanAbort.current = controller
@@ -89,29 +102,29 @@ export default function App() {
       if (!controller.signal.aborted && !isAbort(error) && sequence === scanSerial.current) setScanError(message(error))
     }).finally(() => { if (sequence === scanSerial.current) setScanning(false) })
     return () => { controller.abort(); scanSerial.current++ }
-  }, [selected?.id, supported, configured, browserToken, healthError, health?.model_version, retry, resetScan])
+  }, [selected?.id, supported, configured, browserToken, healthError, health?.model_version, retry, resetScan, showTeam, teamEntry])
 
   const nearest = panoramas[0]
+  const teamList = Object.values(team).sort((a, b) => b.detections.length - a.detections.length || a.panorama.id.localeCompare(b.panorama.id))
+  const teamButton = (entry: TeamPanorama) => <Button key={entry.panorama.id} variant="outline" size="sm" className={selected?.id === entry.panorama.id ? 'active' : ''} onClick={() => { setMode('team'); selectPanorama(entry.panorama) }}>{entry.detections.length ? `${entry.detections.length} litter ${entry.detections.length === 1 ? 'label' : 'labels'}` : 'No litter labelled'} · {new Date(entry.panorama.captured_at).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })}<ArrowUpRight/></Button>
 
   return <div className="app-shell">
     <header className="site-header">
-      <a className="brand" href="/" aria-label="GeoCleanAI home"><span className="brand-symbol"><Leaf size={23} strokeWidth={1.8} /></span><span>GeoClean<span className="brand-ai">AI</span></span><span className="brand-divider"/><span className="brand-caption">STREETS WORTH CARING FOR</span></a>
-      <nav aria-label="Main navigation"><a href="#explore" className="nav-active">Explore Pune</a><button onClick={() => setInfoOpen(true)}>How it works <ArrowUpRight size={13}/></button></nav>
-      <span className="project-badge"><span className="live-dot" /> COLLEGE RESEARCH PROJECT</span>
+      <a className="brand" href="/" aria-label="GeoCleanAI home"><span className="brand-symbol"><Leaf size={23} strokeWidth={1.8} /></span><span>GeoClean<span className="brand-ai">AI</span></span></a>
+      <nav aria-label="Main navigation"><button onClick={() => setInfoOpen(true)}>How it works</button>
+        <button className="theme-toggle" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'} title={theme === 'dark' ? 'Light mode' : 'Dark mode'}>{theme === 'dark' ? <Sun size={17}/> : <Moon size={17}/>}</button></nav>
     </header>
 
     <main id="explore">
       <section className="intro">
-        <div><div className="intro-kicker"><span /> SMALL OBSERVATIONS. CLEANER STREETS.</div><h1>A clearer view of <span>Pune.</span></h1><p>Find a place. Open its street view. Explore automatically marked litter.</p></div>
-        <div className="location-stamp"><MapPin size={17}/><div><strong>Pune, Maharashtra</strong><span>18.5204° N &nbsp; 73.8567° E</span></div><span className="india-dot"/></div>
+        <div><h1>A clearer view of <span>Pune.</span></h1><p>Find a place, open its street view, and look around for marked litter.</p></div>
       </section>
 
       <section className="explore-toolbar" aria-label="Location search">
         <div className="search-block"><form onSubmit={submitSearch} className="search-form"><Search size={19}/><input aria-label="Search Pune" placeholder="Search a street, neighbourhood or landmark…" value={query} onChange={e => { setQuery(e.target.value); setSearchDone(false); setPlaces([]); searchSerial.current++; searchAbort.current?.abort(); setSearching(false) }} maxLength={150}/><Button type="submit" disabled={searching || query.trim().length < 2} size="sm">{searching ? <LoaderCircle className="animate-spin"/> : <ArrowRight/>}<span className="sr-only">Search</span></Button></form>
           {(places.length > 0 || searchDone) && <div className="search-results" aria-live="polite">{places.length ? places.map(p => <button key={p.id} onClick={() => { setQuery(p.name.split(',')[0]); void lookup(p) }}><MapPin size={16}/><span>{p.name}</span><ArrowUpRight size={14}/></button>) : <p>No matching places in the Pune demo area. Try a nearby landmark.</p>}</div>}
         </div>
-        <div className="area-shortcuts"><span>EXPLORE</span>{areas.map(area => <button key={area.id} onClick={() => { void lookup(area) }}>{area.name}<ArrowUpRight size={12}/></button>)}</div>
-        <span className="filter-chip"><SlidersHorizontal size={14}/> Panoramas only</span>
+        <div className="area-shortcuts">{areas.map(area => <button key={area.id} onClick={() => { void lookup(area) }}>{area.name}<ArrowUpRight size={12}/></button>)}</div>
       </section>
 
       {(healthError || health?.status === 'setup_required' || !browserToken) && <div className="setup-banner" role="status"><CircleHelp size={17}/><p>{healthError ? 'The API is not responding yet. The map is available while the service starts.' : !browserToken || !health?.checks.mapillary ? 'Street imagery is not connected yet. You can still explore the Pune map.' : !health?.checks.model ? 'Street exploration is available. Automatic litter markings will appear when the trained model is ready.' : 'A service connection still needs setup before all features are available.'}</p><button onClick={() => { refreshHealth(); setInfoOpen(true) }}>View status <ArrowUpRight size={13}/></button></div>}
@@ -120,27 +133,30 @@ export default function App() {
       <div className="workspace">
         <div className="map-column"><Suspense fallback={<div className="panel panel-loading">Loading map…</div>}><MapPanel panoramas={panoramas} selected={selected} focus={focus} onPoint={onMapPoint} onSelect={selectPanorama}/></Suspense>
           {focus && <section className="location-card" aria-label="Selected location">
-            <div className="location-card-title"><MapPin size={20}/><div><span>YOUR PLACE</span><h2>{focus.name}</h2><p>{focus.lat.toFixed(5)}° N, {focus.lng.toFixed(5)}° E</p></div></div>
+            <div className="location-card-title"><MapPin size={20}/><div><span>YOUR PLACE</span><h2>{focus.name}</h2></div></div>
             <p>{loadingPanos ? 'Finding nearby street photographs…' : nearest ? `${panoramas.length} nearby street ${panoramas.length === 1 ? 'view' : 'views'}${truncated ? ' in this subset' : ''}. Nearest photo: ${nearest.distance_m ?? 0} m away.` : lookedUp ? 'No street photographs found nearby. Your place is still marked on the map.' : 'Street photo availability could not be checked.'}</p>
-            {nearest ? <><p>Nearest photo captured {nearest.captured_at ? new Date(nearest.captured_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : 'on an unavailable date'}. Photos show past conditions.</p><Button onClick={() => selectPanorama(nearest)} disabled={!browserToken}>Open street view <ArrowUpRight size={16}/></Button>{!browserToken && <p>Street imagery is not connected yet.</p>}</> : !loadingPanos && !lookedUp && <Button variant="outline" onClick={() => void lookup(focus)}>Retry nearby photos</Button>}
+            {nearest ? <><Button onClick={() => selectPanorama(nearest)} disabled={!browserToken}>Open street view <ArrowUpRight size={16}/></Button>{!browserToken && <p>Street imagery is not connected yet.</p>}</> : !loadingPanos && !lookedUp && <Button variant="outline" onClick={() => void lookup(focus)}>Retry nearby photos</Button>}
           </section>}
-          <section className="nearby-panel" aria-label="Available panoramas"><div className="nearby-heading"><span>Nearby street views</span><span>{loadingPanos ? 'Searching…' : lookedUp ? `${panoramas.length} available` : 'Not checked'}</span></div>
+          {(lookedUp || loadingPanos) && <section className="nearby-panel" aria-label="Available panoramas"><div className="nearby-heading"><span>Nearby street views</span><span>{loadingPanos ? 'Searching…' : lookedUp ? `${panoramas.length} available` : 'Not checked'}</span></div>
             {loadingPanos ? <div className="nearby-empty"><LoaderCircle className="animate-spin" size={18}/> Looking within 500 metres…</div> : panoramas.length ? <><div className="panorama-list">{panoramas.map(p => <button key={p.id} className={selected?.id === p.id ? 'panorama-card active' : 'panorama-card'} onClick={() => selectPanorama(p)}><div className="panorama-thumb">{p.thumbnail_url ? <img src={p.thumbnail_url} alt="Street panorama preview" loading="lazy"/> : <MapPin size={20}/>}</div><div><strong>{p.distance_m ?? 0} m away</strong><span>{p.captured_at ? new Date(p.captured_at).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' }) : 'Date unavailable'}</span></div><ArrowUpRight size={16}/></button>)}</div>{truncated && <p className="small-note">A subset is shown. Select a closer map point to explore more images.</p>}</> : <div className="nearby-empty"><Crosshair size={19}/><span>{lookedUp ? 'No panoramas found within 500 m. Try another point nearby.' : 'Select a map point or an area above to check image coverage.'}</span></div>}
-          </section>
+          </section>}
         </div>
         <div className="viewer-column" ref={viewerColumn}>
           <Suspense fallback={<div className="panel panel-loading">Loading street viewer…</div>}>
             <StreetViewer selected={selected} analysis={analysis} activeDetection={activeDetection} scanning={scanning} unavailable={unavailable} onImage={onViewerImage} onDetection={inspectDetection}/>
           </Suspense>
-          <ResultsPanel selected={selected} analysis={analysis} scanning={scanning} error={scanError} unavailable={unavailable} activeDetection={activeDetection} onDetection={inspectDetection} onRetry={() => setRetry(value => value + 1)}/>
+          <ResultsPanel selected={selected} analysis={analysis} scanning={scanning} error={scanError} unavailable={unavailable} activeDetection={activeDetection} onDetection={inspectDetection} onRetry={() => setRetry(value => value + 1)} teamAvailable={Boolean(teamEntry && supported && browserToken)} modelAvailable={configured && !healthError} showingTeam={showTeam} onMode={setMode}/>
         </div>
       </div>
 
       {Boolean(health?.samples.length) && <section className="verified-samples"><h2>Verified presentation locations</h2>{health!.samples.map(p => <Button key={p.id} variant="outline" onClick={() => selectPanorama(p)}>Open photo {p.id}<ArrowUpRight/></Button>)}</section>}
-      <section className="principles"><div><span><RotateIcon/></span><section><h3>Real streets. Real context.</h3><p>Explore existing street photographs, wherever panoramic coverage is available.</p></section></div><div><span><Sparkles size={20}/></span><section><h3>AI lends a second pair of eyes.</h3><p>A model trained for litter offers suggestions for you to inspect.</p></section></div><div><span><Clock3 size={20}/></span><section><h3>A moment in time.</h3><p>Every photo tells a past story. Check its date before drawing conclusions.</p></section></div></section>
+      {teamList.length > 0 && <section className="team-samples" aria-label="Team-labelled street views"><div className="team-heading"><h2>Team-labelled street views</h2><button onClick={() => setAllTeam(value => !value)}>{allTeam ? 'Show fewer' : `Show all ${teamList.length}`}</button></div>
+        <p>Streets our team labelled by hand. Open one to see the labels{configured ? ', then switch to AI detections to compare' : ''}.</p>
+        <div>{(allTeam ? teamList : teamList.slice(0, 8)).map(teamButton)}</div>
+      </section>}
     </main>
     <footer><span><Leaf size={15}/> GeoCleanAI <span className="footer-dot">·</span> Built for a cleaner tomorrow.</span><div><a href="https://www.mapillary.com/" target="_blank" rel="noreferrer">Mapillary <ExternalLink size={11}/></a><a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">© OpenStreetMap contributors</a><button onClick={() => setInfoOpen(true)}><ShieldCheck size={13}/> About this prototype</button></div></footer>
     <InfoDialog open={infoOpen} onOpenChange={setInfoOpen} health={health}/>
   </div>
 }
-function RotateIcon() { return <MapPin size={20}/> }
+
