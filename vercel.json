@@ -7,7 +7,7 @@
     "api/index.py": {
       "maxDuration": 60,
       "includeFiles": "{backend/**,models/**,public/samples.json}",
-      "excludeFiles": "{.venv/**,node_modules/**,training/**,tests/**,scripts/**,data/**,artifacts/**,models/*.pt}"
+      "excludeFiles": "{.venv/**,node_modules/**,dist/**,public/team-labels/**,src/**,training/**,tests/**,scripts/**,data/**,artifacts/**,models/*.pt}"
     }
   },
   "rewrites": [
