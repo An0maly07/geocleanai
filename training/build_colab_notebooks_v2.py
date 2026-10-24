@@ -7,6 +7,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def ultralytics_pin() -> str:
+    """The one Ultralytics pin, read from training/requirements.txt so notebooks and configs cannot drift apart."""
+    pins = [line.strip() for line in (ROOT/'training/requirements.txt').read_text().splitlines()
+            if line.strip().startswith('ultralytics==')]
+    assert len(pins) == 1, 'training/requirements.txt must pin exactly one ultralytics==<version>.'
+    return pins[0]
+
+
 def notebook(cells: list[tuple[str, str]], name: str) -> dict:
     built = []
     for index, (kind, source) in enumerate(cells):
@@ -67,9 +75,13 @@ def setup_cells(v1_sha: str, v2_name: str, v2_sha: str) -> list[tuple[str, str]]
             print('Bundles verified:', V1, V2, '| derived datasets:', list(BUNDLE['originals_from_v1']))
         '''),
         ('markdown', 'Install the pinned training packages. If this cell asks for a restart, use **Runtime → Restart session** and run from the top again.'),
-        ('code', '''
+        ('code', f'''
+            import os
+            # Stop Ultralytics installing or upgrading packages by itself (runs drifted from 8.4.155 to 8.4.163):
+            # a missing package now fails loudly instead of silently changing versions. Set before pip and import.
+            os.environ['YOLO_AUTOINSTALL'] = 'False'
             from importlib.metadata import version, PackageNotFoundError
-            PIN = 'ultralytics==8.4.155'
+            PIN = '{ultralytics_pin()}'
             def installed(name):
                 try:
                     return version(name)
@@ -77,18 +89,14 @@ def setup_cells(v1_sha: str, v2_name: str, v2_sha: str) -> list[tuple[str, str]]
                     return None
             if getattr(sys, '_geoclean_restart_required', False):
                 raise RuntimeError('Restart the session (Runtime > Restart session), then run from the top.')
-            watched = {'Pillow': 'PIL', 'numpy': 'numpy', 'torch': 'torch', 'ultralytics': 'ultralytics', 'onnxruntime': 'onnxruntime'}
-            before, loaded = {n: installed(n) for n in watched}, set(sys.modules)
+            watched = {{'Pillow': 'PIL', 'numpy': 'numpy', 'torch': 'torch', 'ultralytics': 'ultralytics', 'onnxruntime': 'onnxruntime'}}
+            before, loaded = {{n: installed(n) for n in watched}}, set(sys.modules)
             subprocess.run([sys.executable, '-m', 'pip', 'install', '-q', '-r', str(V2/'code/training/requirements.txt')], check=True)
             if [n for n, m in watched.items() if before[n] != installed(n) and any(k == m or k.startswith(m + '.') for k in loaded)]:
                 sys._geoclean_restart_required = True
                 raise RuntimeError('Libraries changed after import. Restart the session, then run from the top.')
-            import os
-            # Stop Ultralytics installing or upgrading packages by itself mid-run (open question U2):
-            # a missing package now fails loudly instead of silently changing versions.
-            os.environ['YOLO_AUTOINSTALL'] = 'False'
             import ultralytics, torch
-            assert ultralytics.__version__ == PIN.split('==')[1], f'Ultralytics {ultralytics.__version__} loaded; expected {PIN}.'
+            assert ultralytics.__version__ == PIN.split('==')[1], f'Ultralytics {{ultralytics.__version__}} loaded; expected {{PIN}}.'
             FREEZE = subprocess.run([sys.executable, '-m', 'pip', 'freeze'], capture_output=True, text=True).stdout
             print('Ultralytics', ultralytics.__version__, '| torch', torch.__version__, '| GPU:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'none')
         '''),

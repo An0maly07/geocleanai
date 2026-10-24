@@ -38,11 +38,14 @@ def test_experiment_configs_are_valid_and_defaults_match_baseline(tmp_path):
     assert {k: DEFAULTS[k] for k in ('model', 'imgsz', 'batch', 'epochs', 'patience', 'seed')} == \
         {'model': 'yolo26n.pt', 'imgsz': 640, 'batch': 8, 'epochs': 50, 'patience': 10, 'seed': 42}
     root = Path(__file__).resolve().parents[2]
+    pinned = [line.split('==')[1].strip() for line in (root/'training/requirements.txt').read_text().splitlines()
+              if line.startswith('ultralytics==')]
+    assert len(pinned) == 1  # one pin; notebooks read it from this file
     configs = sorted((root/'training/experiments').glob('*.json'))
     assert len([p for p in configs if p.name.startswith('e')]) <= 3  # At most three first-stage experiments (E1-E3).
     for path in configs:
         config = load_config(path, {})
-        assert config['ultralytics_version'] == '8.4.155' and config['seed'] == 42 and config['imgsz'] == 640
+        assert config['ultralytics_version'] == pinned[0] and config['seed'] == 42 and config['imgsz'] == 640
         assert config['batch_fallbacks'] == sorted(config['batch_fallbacks'], reverse=True)
         assert config['question']
         if path.name.startswith('s'):  # Second stages continue from a named, hash-checked checkpoint.
