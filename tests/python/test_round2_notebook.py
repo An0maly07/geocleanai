@@ -13,3 +13,10 @@ def test_round2_notebook_applies_every_change_and_writes_to_new_drive_folders():
     assert "DRIVE/'selection-r2'" in code and "DRIVE/'selection'" not in code
     assert "(DRIVE/'experiments')" not in code and "DRIVE/'experiments'/" not in code
     notebook(cells, 'round2-test')  # every code cell compiles
+
+
+def test_setup_pins_ultralytics_from_requirements_and_disables_autoinstall():
+    from build_colab_notebooks_v2 import ultralytics_pin
+    install = next(source for kind, source in setup_cells('0' * 64, 'x.zip', '1' * 64) if 'pip' in source and 'PIN' in source)
+    assert f"PIN = '{ultralytics_pin()}'" in install
+    assert install.index("YOLO_AUTOINSTALL'] = 'False'") < install.index("'pip', 'install'")
