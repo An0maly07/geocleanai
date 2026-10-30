@@ -96,3 +96,75 @@ def test_tiled_detection_maps_tile_boxes_to_the_view(monkeypatch, tmp_path):
     boxes = sorted(tuple(round(v * 1024) for v in d['box']) for d in found)
     assert boxes == [(100, 100, 140, 140), (100, 484, 140, 524), (484, 100, 524, 140), (484, 484, 524, 524)]
     assert all(d['confidence'] == pytest.approx(.8) for d in found)
+
+
+PLITTER_MAP = {'0': 'litter', '1': 'litter', '2': 'litter', '3': None}
+
+
+def yolov5_raw(*rows):
+    """Raw pLitter-shaped rows: cx, cy, w, h, objectness, Plastic, Pile, Face mask, Trash bin."""
+    return np.array([rows], dtype=np.float32)
+
+
+def test_yolov5_rows_scores_maps_classes_and_suppresses_overlaps():
+    from backend.detector import yolov5_rows
+    raw = yolov5_raw([100,100,20,20, .9, .9,0,0,0],    # plastic, .81
+                     [102,101,20,20, .8, .9,0,0,0],    # same object, lower score -> suppressed
+                     [300,300,40,40, .9, 0,0,0,.95],   # trash bin -> not litter
+                     [400,200,10,10, .8, 0,.6,0,0],    # pile, .48
+                     [500,500,10,10, .5, .5,0,0,0],    # .25, below threshold
+                     [600,600,10,10, np.nan, 1,0,0,0])  # non-finite -> ignored
+    rows = yolov5_rows(raw, PLITTER_MAP, .35)
+    assert rows.shape == (1, 2, 6)
+    assert rows[0, :, :4].tolist() == [[90, 90, 110, 110], [395, 195, 405, 205]]
+    assert rows[0, :, 4] == pytest.approx([.81, .48])
+    assert (rows[0, :, 5] == 0).all()
+
+
+def test_yolov5_rows_rejects_wrong_class_count():
+    from backend.detector import yolov5_rows
+    with pytest.raises(ServiceError, match='unsupported output shape'):
+        yolov5_rows(np.zeros((1, 3, 8), np.float32), PLITTER_MAP, .35)
+
+
+@pytest.mark.parametrize('class_map, valid', [
+    (PLITTER_MAP, True),
+    ({'0': 'litter'}, True),
+    ({'0': None, '1': None}, False),        # nothing maps to litter
+    ({'0': 'litter', '2': 'litter'}, False),  # missing index 1
+    ({'0': 'bottle'}, False),
+    (None, False),
+])
+def test_manifest_validates_yolov5_class_map(tmp_path, monkeypatch, class_map, valid):
+    write_manifest(tmp_path, monkeypatch, {'format': 'yolov5', 'class_map': class_map})
+    if valid:
+        assert manifest()['class_map'] == class_map
+    else:
+        with pytest.raises(ServiceError):
+            manifest()
+
+
+def test_yolov5_onnx_runtime_fixture(monkeypatch, tmp_path):
+    # Synthetic constant model with pLitter's raw output shape [1, N, 9]. Never deployed.
+    raw = yolov5_raw([320,320,320,160, .9, .9,0,0,0], [322,321,320,160, .9, .8,0,0,0], [100,100,40,40, .9, 0,0,0,.9])
+    output = helper.make_tensor('values', TensorProto.FLOAT, list(raw.shape), raw.flatten().tolist())
+    graph = helper.make_graph([helper.make_node('Constant', [], ['output0'], value=output)], 'test-only', [helper.make_tensor_value_info('images', TensorProto.FLOAT, [1,3,640,640])], [helper.make_tensor_value_info('output0', TensorProto.FLOAT, list(raw.shape))])
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid('',17)]); model.ir_version = 9
+    onnx.save(model, tmp_path / 'm.onnx')
+    write_manifest(tmp_path, monkeypatch, {'format': 'yolov5', 'class_map': PLITTER_MAP})
+    found = detect(Image.new('RGB', (640, 320)), VIEW, manifest())
+    # One litter object after NMS; the trash bin is dropped. Letterbox pads 160px top and bottom.
+    assert len(found) == 1
+    assert found[0]['box'] == pytest.approx([.25, .25, .75, .75])
+    assert found[0]['confidence'] == pytest.approx(.81)
+
+
+def test_yolov5_model_needs_yolov5_manifest(monkeypatch, tmp_path):
+    raw = yolov5_raw([320,320,320,160, .9, .9,0,0,0])
+    output = helper.make_tensor('values', TensorProto.FLOAT, list(raw.shape), raw.flatten().tolist())
+    graph = helper.make_graph([helper.make_node('Constant', [], ['output0'], value=output)], 'test-only', [helper.make_tensor_value_info('images', TensorProto.FLOAT, [1,3,640,640])], [helper.make_tensor_value_info('output0', TensorProto.FLOAT, list(raw.shape))])
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid('',17)]); model.ir_version = 9
+    onnx.save(model, tmp_path / 'm.onnx')
+    write_manifest(tmp_path, monkeypatch, {})  # yolo26-end2end expects 6 columns
+    with pytest.raises(ServiceError, match='incompatible'):
+        detect(Image.new('RGB', (640, 320)), VIEW, manifest())
