@@ -1,11 +1,18 @@
 {
-  "version": "pune-litter-v1",
-  "trained": false,
+  "version": "plitter-street-yolov5l-v0.0.0-fp16",
+  "trained": true,
   "classes": ["litter"],
-  "format": "yolo26-end2end",
+  "format": "yolov5",
+  "class_names": ["Plastic", "Pile", "Face mask", "Trash bin"],
+  "class_map": {"0": "litter", "1": "litter", "2": "litter", "3": null},
   "input_size": 640,
   "confidence_threshold": 0.35,
-  "sha256": "GENERATED_BY_TRAINING_EXPORT",
-  "training_dataset": "Reviewed TACO annotations",
-  "evaluation": "Not yet evaluated on Pune images"
+  "nms_iou": 0.45,
+  "sha256": "7643f8777187011fe0e540dbc9d64ea7d95cb300678dca0931f63157f632c9a9",
+  "source": "https://github.com/gicait/pLitter/releases/download/v0.0.0-street/pLitterStreet_YOLOv5l.pt",
+  "source_sha256": "see model-info.json from training/plitter_export.ipynb",
+  "export": "training/plitter_export.ipynb: YOLOv5 commit 43623729, opset 17, FP16 weights with FP32 input/output",
+  "training_dataset": "pLitterStreet (CC BY 4.0), trained by the pLitter authors; not trained by GeoCleanAI",
+  "licence": "pLitter weights have no stated licence; permission requested from the authors before public deployment",
+  "evaluation": "Not yet evaluated on Pune images; threshold 0.35 is a placeholder until plan task 2.4"
 }

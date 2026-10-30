@@ -217,8 +217,12 @@ def choose_threshold(rows: list[dict], min_precision: float = .85) -> dict:
     return {**max(rows, key=lambda r: (f1(r), -r['threshold'])), 'rule': f'no threshold reached precision {min_precision}; maximum F1'}
 
 
-def load_runner(model_path: Path, confidence: float):
-    """Return (run(tensor) -> rows in letterboxed pixels, versions). ONNX for deployment, .pt for validation sweeps."""
+def load_runner(model_path: Path, confidence: float, manifest: Path | None = None):
+    """Return (run(tensor) -> rows in letterboxed pixels, versions). ONNX for deployment, .pt for validation sweeps.
+
+    manifest: the model's manifest.json, required for raw YOLOv5 exports (the pretrained pLitter model),
+    whose output is decoded and NMS-filtered with the deployed backend code.
+    """
     if Path(model_path).suffix == '.pt':
         import ultralytics
         from ultralytics import YOLO
@@ -228,8 +232,17 @@ def load_runner(model_path: Path, confidence: float):
             return model.predict(square, imgsz=INPUT_SIZE, rect=False, conf=confidence, nms=False, max_det=100, verbose=False)[0].boxes.data.cpu().numpy()
         return run, {'ultralytics': getattr(ultralytics, '__version__', None)}
     import onnxruntime as ort
+    from backend.detector import output_rows  # imported here: it loads app config, which Colab may not need
     session = ort.InferenceSession(str(model_path), providers=['CPUExecutionProvider'])
-    return (lambda tensor: session.run(None, {session.get_inputs()[0].name: tensor})[0][0]), {'onnxruntime': getattr(ort, '__version__', None)}
+    info = json.loads(Path(manifest).read_text(encoding='utf-8')) if manifest else {'format': 'yolo26-end2end'}
+    # Decode at the evaluation threshold, not the deployed one, so sweeps see every candidate.
+    rows = output_rows({**info, 'confidence_threshold': confidence})
+    def run(tensor):
+        output = session.run(None, {session.get_inputs()[0].name: tensor})[0]
+        if info['format'] != 'yolov5' and np.shape(output)[-1] != 6:
+            raise ValueError('This model has raw YOLOv5 output. Pass --manifest with its manifest.json.')
+        return rows(output)[0]
+    return run, {'onnxruntime': getattr(ort, '__version__', None)}
 
 
 def evaluate(args):
@@ -237,7 +250,7 @@ def evaluate(args):
     split = getattr(args, 'split', None)
     image_dir = args.dataset/'images'/split if split else args.dataset/'images'
     label_dir = args.dataset/'labels'/split if split else args.dataset/'labels'
-    run, versions = load_runner(args.model, args.confidence)
+    run, versions = load_runner(args.model, args.confidence, getattr(args, 'manifest', None))
     records, parity_records = [], []
     torch_model = None
     if getattr(args, 'pt', None):
@@ -315,4 +328,5 @@ if __name__ == '__main__':
     parser.add_argument('--tiled', action='store_true', help='Views rendered above 640px: detect with overlapping 640px tiles')
     parser.add_argument('--stride', type=int, default=384)
     parser.add_argument('--pt', type=Path, help='Optional PyTorch best.pt for export parity checks')
+    parser.add_argument('--manifest', type=Path, help="The model's manifest.json; required for raw YOLOv5 exports")
     evaluate(parser.parse_args())

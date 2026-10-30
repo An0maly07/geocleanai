@@ -223,3 +223,20 @@ def test_tiled_evaluation_uses_view_pixels_for_size(tmp_path, monkeypatch):
     assert counter['n'] == 4 and result['true_positives'] == 1 and result['false_positives'] == 0
     assert result['per_image'][0]['truths'][0]['short_side_px'] == pytest.approx(20)
     assert result['mode'].startswith('tiled 1024px')
+
+
+def test_raw_yolov5_model_is_decoded_with_its_manifest(tmp_path, monkeypatch):
+    import json
+    from training.evaluate import load_runner
+    raw = np.array([[[320,320,100,100, .9, .9,0,0,0], [100,100,40,40, .9, 0,0,0,.9]]], dtype=np.float32)
+    session = SimpleNamespace(get_inputs=lambda: [SimpleNamespace(name='images')], run=lambda *_: [raw])
+    monkeypatch.setitem(sys.modules, 'onnxruntime', SimpleNamespace(InferenceSession=lambda *a, **k: session))
+    unread, _ = load_runner(tmp_path/'m.onnx', .1)
+    with pytest.raises(ValueError, match='--manifest'):
+        unread(np.zeros((1, 3, 640, 640), np.float32))
+    meta = tmp_path/'manifest.json'
+    meta.write_text(json.dumps({'format': 'yolov5', 'class_map': {'0': 'litter', '1': 'litter', '2': 'litter', '3': None}, 'confidence_threshold': .9}))
+    run, _ = load_runner(tmp_path/'m.onnx', .1, meta)
+    rows = run(np.zeros((1, 3, 640, 640), np.float32))
+    # The evaluation threshold (0.1) is used, not the manifest's 0.9; the trash bin is dropped.
+    assert rows.tolist() == [[270, 270, 370, 370, pytest.approx(.81), 0]]
